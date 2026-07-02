@@ -1,0 +1,48 @@
+brand,perfume,gender,notes,accords,price_inr
+Fogg,Marco,male,"Lemon,Orange,Black Pepper,Clove,Cedarwood,Vetiver","citrus,spicy,woody",
+Fogg,Xtremo Scent,male,"Ginger,Bitter Orange,Rose,Jasmine,Amber,Sandalwood","spicy,floral,amber,woody",
+Engage,Yang,female,"Fruity notes,Floral notes","fruity,floral",
+Engage,Verona,female,"Citruses,Fruity notes","citrus,fruity",
+Engage,Fantasia,female,"Floral notes,Spices","floral,spicy",
+Engage,Amber Hues,male,"Amber","amber,warm spicy",
+Engage,Indigo Skies,male,"Earthy notes,Aquatic notes","earthy,aquatic",
+Wild Stone,Edge,male,"Lemon,Green notes,Artemisia,Cedarwood,Amber,Tonka Bean","citrus,woody,amber",
+Wild Stone,Ultra Sensual,male,"Citruses,Spices,Woody notes","citrus,spicy,woody",
+Wild Stone,Forest Spice,male,"Citruses,Black Pepper,Woody notes","citrus,spicy,woody",
+Wild Stone,Hydra Energy,male,"Lemon,Juniper Berries,Sandalwood","citrus,woody,fresh",
+Wild Stone,Stone Body Perfume,male,"Citruses,Lavender,Mandarin Orange,Bergamot,Orange Blossom,Juniper Berries,Geranium,Sandalwood,Vetiver,Rosewood,Musk","floral,citrus,woody,musky",
+Bella Vita Organic,Date,female,"Pink Pepper,Red Fruits,Jasmine,Orange Blossom,Violet,Moss,Musk,Vanilla","floral,fruity,musky,vanilla",565
+Bella Vita Organic,Impact,male,"Mandarin Orange,Nutmeg,Cardamom,Cedar","citrus,spicy,woody",
+Bella Vita Organic,Glam,female,"African Orange,Jasmine,White Honey,Patchouli,Rose,Virginia Cedar","floral,gourmand,woody",565
+Bella Vita Organic,Fresh,unisex,"Almond,Bergamot,Lavender,Ylang-Ylang","fresh,aromatic,floral",485
+Bella Vita Organic,White Oud,unisex,"Citruses,Spices,Agarwood (Oud)","citrus,spicy,woody",559
+Bella Vita Organic,Skai Aquatic,unisex,"Sea notes,Grapefruit,Mandarin Orange,Jasmine,Bay Leaf,Guaiac Wood,Oakmoss,Patchouli","aquatic,citrus,woody",485
+Bella Vita Organic,Pure Musk,unisex,"Musk","musky",425
+Bella Vita Organic,Oud Gold,unisex,"Agarwood (Oud),Amber","woody,amber",725
+Bella Vita Organic,Honey Oud,unisex,"Honey,Agarwood (Oud)","gourmand,woody,amber",559
+Bella Vita Organic,Dark Oud,unisex,"Agarwood (Oud)","woody,amber",725
+Bella Vita Organic,Vanilla Gourmet Collection,unisex,"Vanilla","gourmand,vanilla",599
+The Man Company,Black,male,"Lemon,Birch Leaves,Cardamom,Lavender,Geranium,Juniper,Amberwood,Musk,Sandalwood","citrus,spicy,aromatic,woody,musky",
+The Man Company,Hope,male,"Apple,Geranium,Musk","fruity,musky",
+The Man Company,Polo Green,male,"Peach,Lavender,Patchouli","fruity,aromatic,woody",
+Ustraa,Malt,male,"Vetiver,Musk,Tonka Bean,Tobacco,Patchouli","woody,musky,oriental",
+Ustraa,Base Camp Cologne,male,"Bergamot,Lemon,Lime,Black Pepper,Tagette,Cypress,Rosemary,Cedar,Amber,Musk","citrus,spicy,woody,amber",
+Ustraa,Ammunition Cologne,male,"Violet,Sage,Cedar,Vetiver,Paprika,Sandalwood,Oak,Pine","aromatic,woody,spicy",
+Ustraa,Scuba Cologne,male,"Bergamot,Lavender,Pineapple,Coumarin,Geranium,Oakmoss,Apple,Tonka Bean,Sandalwood,Pomarosa","citrus,aromatic,fruity,woody",
+Ustraa,After Dark,male,"Spices,Earthy notes,Agarwood (Oud)","spicy,earthy,woody",
+Ajmal,Aurum,female,"Vanilla,Raspberry,Jasmine","gourmand,fruity,floral",
+Ajmal,Wisal Dhahab,female,"Apple,Peach,Mandarin Orange,Rose,Jasmine,Orchid,Sandalwood,Patchouli,Musk","fruity,floral,woody,musky",
+Ajmal,Amber Wood,female,"Amber,Saffron,Sandalwood","amber,spicy,woody",
+Ajmal,Silver Shade,male,"Plum,Lime,Lemon,Blackcurrant,Jasmine,Rose,Cedarwood,Sandalwood,White Musk","citrus,fruity,floral,woody,musky",
+Ajmal,Hatkora Wood,male,"Lemon,Peach,Saffron,Rose,Lavender,Agarwood (Oud),Sandalwood,Amber","citrus,fruity,spicy,floral,woody,amber",
+Skinn by Titan,Raw,male,"Bergamot,Watery Fruits,Mandarin Orange,Violet Leaves,Pomarose,Carnation,Geranium,Patchouli,Cashmeran,Guaiac Wood","citrus,fruity,floral,woody",
+Skinn by Titan,Verge,male,"Lavender,Lemon,Rosemary,Basil,Geranium,Spearmint,Patchouli,Leather,Oakmoss","aromatic,citrus,woody,leather",
+Skinn by Titan,Steele,male,"Bergamot,Lavender,Vetiver,Patchouli","citrus,aromatic,woody",
+Skinn by Titan,Celeste,female,"Bergamot,Mandarin Orange,Guava,Quince,Jasmine Sambac,Peach Blossom,Gardenia,Peony,Ylang-Ylang,Amber,Musk","citrus,fruity,floral,amber,musky",
+Villain,Classic,male,"Orange Blossom,Blackberry,Jasmine,Coffee,Bitter Almond,Vanilla,White Musk,Cedar","floral,fruity,gourmand,musky,woody",
+Villain,Hydra,male,"Bergamot,Lemon,Patchouli,White Musk","citrus,aquatic,woody,musky",
+Villain,Snake,male,"Mandarin Orange,Bergamot,Amber,White Musk","citrus,amber,musky",
+Denver,Hamilton,male,"Lavender,Bergamot,Carnation,Rose,Juniper,Cypress,Galbanum","aromatic,citrus,floral,spicy,green",
+Denver,Pride,male,"Lavender,Sandalwood","aromatic,woody",
+Denver,Green Hamilton,male,"Musk,Fresh notes","musky,fresh",
+Belliora,Pure Blush,female,"Mandarin Orange,Velvet Peach,Jasmine Sambac,Red Spider Lily","fresh floral,fruity,floral",

@@ -52,6 +52,7 @@ Thumbs.db
 
 # Database / Large Data
 backend/data/*.csv
+!backend/data/indian_brands.csv
 backend/data/*.json
 backend/data/*.sqlite
 _last_query_vectors.json

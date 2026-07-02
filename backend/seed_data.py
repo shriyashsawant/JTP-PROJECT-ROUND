@@ -32,7 +32,8 @@ INDIAN_MID = {"calvin klein", "davidoff", "diesel", "bentley", "nike", "adidas",
 MIDDLE_EASTERN = {"armaf", "lattafa", "rasasi", "al rehab", "swiss arabian",
     "ajmal", "al haramain", "maison alhambra", "afnan", "paris corner"}
 INDIAN_DESIGNER = {"wild stone", "engage", "skinn by titan", "titan", "nykaa",
-    "muse", "fogg", "denver", "park avenue", "set wet"}
+    "muse", "fogg", "denver", "park avenue", "set wet", "bella vita", "the man company",
+    "ustraa", "villain", "belliora"}
 
 def estimate_inr_price(brand: str) -> int:
     b = brand.lower().strip()
@@ -193,6 +194,36 @@ def load_fra_cleaned(path: str) -> list[dict]:
             })
     return rows
 
+def load_indian_brands(path: str) -> list[dict]:
+    """Load the hand-curated Indian mass-market brand supplement (Fogg, Engage,
+    Wild Stone, Bella Vita, The Man Company, Ustraa, Ajmal, Skinn by Titan,
+    Villain, Denver, Belliora) - compiled from each brand's own published note
+    lists, not present in the Fragrantica-derived datasets. `price_inr` is a
+    real observed price where known; blank falls back to the brand-tier heuristic."""
+    if not os.path.exists(path):
+        return []
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            price_raw = (row.get("price_inr") or "").strip()
+            rows.append({
+                "brand": row["brand"],
+                "perfume": row["perfume"],
+                "name": row["perfume"],
+                "launch_year": "Unknown",
+                "notes": [n.strip() for n in row.get("notes", "").split(",") if n.strip()],
+                "accords": [a.strip() for a in row.get("accords", "").split(",") if a.strip()],
+                "description": "",
+                "image_url": None,
+                "gender": normalize_gender(row.get("gender")),
+                "rating": None,
+                "rating_count": None,
+                "real_price_inr": int(price_raw) if price_raw.isdigit() else None,
+                "source": "indian_brands",
+            })
+    return rows
+
+
 def load_nandini(path: str) -> list[dict]:
     """Load Nandini dataset (2.2K niche + images)."""
     rows = []
@@ -271,13 +302,21 @@ def extract_perfume_from_name(name: str) -> str:
 # Merge & dedup
 # ---------------------------------------------------------------------------
 def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: bool = False) -> list[dict]:
-    """Load all 4 datasets and merge with dedup. Priority: nandini > fra_cleaned > fra_perfumes > da_fragrance."""
+    """Load all datasets and merge with dedup. Priority: nandini > fra_cleaned > fra_perfumes > indian_brands > da_fragrance."""
     all_rows = []
 
     # 1. DA_Fragrance (base)
     print(f"Loading DA_Fragrance from {da_path}...")
     all_rows.extend(load_da_fragrance(da_path))
     print(f"  -> {len(all_rows)} rows")
+
+    # Indian mass-market brand supplement (local file, always available regardless
+    # of --da-only, since it needs no Kaggle download)
+    indian_brands_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "indian_brands.csv")
+    print(f"Loading Indian brands supplement from {indian_brands_path}...")
+    indian_rows = load_indian_brands(indian_brands_path)
+    all_rows.extend(indian_rows)
+    print(f"  -> {len(indian_rows)} rows")
 
     if da_only:
         print("  Skipping Fragrantica & Nandini (--da-only)")
@@ -450,7 +489,7 @@ def seed_local(perfumes: list[dict], conn_string: str):
         for i, row in enumerate(perfumes):
             text = build_embedding_text(row)
             embedding = generate_embedding(model, text)
-            price = estimate_inr_price(row["brand"])
+            price = row.get("real_price_inr") or estimate_inr_price(row["brand"])
             longevity_score, sillage_score = compute_longevity_sillage(row["accords"], row["notes"])
 
             try:
