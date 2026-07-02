@@ -1,0 +1,68 @@
+services:
+  db:
+    image: ankane/pgvector:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: auramatch
+      POSTGRES_PASSWORD: auramatch_secret
+      POSTGRES_DB: auramatch
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+      - ./backend/data:/docker-entrypoint-initdb.d
+    healthcheck:
+      # -h 127.0.0.1 forces a real TCP check. Postgres's init scripts (schema +
+      # the ~31K-row seed data) run against a temporary Unix-socket-only server
+      # first; a socket-based pg_isready (the default, no -h) reports "healthy"
+      # while that temporary server is still mid-seed, so `backend` can start
+      # against a partially-loaded table. TCP only opens once seeding is done
+      # and Postgres restarts for real.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U auramatch -d auramatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    networks:
+      - auramatch_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://auramatch:auramatch_secret@db:5432/auramatch
+      MODEL_NAME: all-MiniLM-L6-v2
+      DEBUG: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - model_cache:/root/.cache/huggingface
+    networks:
+      - auramatch_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - auramatch_net
+
+networks:
+  auramatch_net:
+    driver: bridge
+
+volumes:
+  pgvector_data:
+  model_cache:

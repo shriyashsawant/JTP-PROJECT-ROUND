@@ -1,0 +1,70 @@
+Project Round Details 
+
+
+
+ 
+Project Details:
+
+Project Name: Matching / Recommendation Service.
+Submission Deadline: 8th July 2026 before 23:55
+Number of reviews: 2 (1- Division Manager, 2- Final Review).
+
+Note: For any questions you may contact via email to international recruitment group.
+
+Create a matching or a suggestion-based application.
+In which the user either inputs data using a form or selects his/her preferences from a list/form available.
+The system using the entries provided by the user either matches his preference or data from the input to give out multiple results.
+
+A few examples of such matching systems or suggestion systems are:
+1. Movie suggestions on Netflix / Amazon Prime
+2. Matching system in websites such as dating or matrimonial websites
+3. Image Matching service with “similar to your image”-Feature
+
+You are free to use any available database source online or API (copy paste of dummy database or APIs for database will not be marked as cheating if the source is declared)
+
+Components:
+1.	Front end for users to enter the options and display of result.
+2.	Application for matching or suggesting.
+3.	Database to match and suggest from.
+
+Important Information:
+1.	Both the web application and the database must be containerized with Docker.
+2.	Frontend and backend must be separated logically (each in their own container) and connected through an API.
+3.	The project must be uploaded to GitHub and must be plug and play.
+
+Specifications 
+Objective	Create a web application service of any of the three kinds:
+1. Matching
+2. Recommendation
+3. Image Recognition
+Compulsory Requirements	Web Application Interface, Backend (and optionally Database) must each be containerized in their own container, which are connected through a custom Docker network.
+	Programming language:
+-	Backend & API: 
+o	Python 
+
+-	Frontend: 
+o	any modern JavaScript framework (React, Vue, Angular, NextJS, NuxtJS...).
+o	can be written in TypeScript.
+o	no jQuery, plain JavaScript allowed.
+Options available	Any database to store the data
+	Data can be streamed from an open API or downloaded from e.g., Kaggle
+Final Output	Must be uploaded on GitHub (public repository)
+	 Must be plug and play with docker compose up
+Add comprehensive documentation:
+-	Why did you choose the project, what is special about it.
+-	Technical documentation in the form of docstrings as well as a README.md file.
+-	If applicable, steps made to prepare data structure, tools used to realize project.
+ 
+Please feel free to contact the trainer for any issues.
+
+Important Points:
+AI Tools: You are free to use any AI coding tools you like (for example ChatGPT, Claude, GitHub Copilot, Cursor, Gemini, or similar). You remain fully responsible for everything you submit and must be able to explain and justify your own code during the reviews.
+1.	Code generated with AI tools may be pasted and used freely. Copying code from other repositories, online projects, or other candidates is not allowed — aside from sample databases and the APIs used to connect to them, your submission must be your own original work.
+2.	Using samples / open to use templates / content owned by any third party or individual will not be allowed.
+3.	Providing or using modules created by other candidates will not be allowed.
+4.	Incomplete projects will not be allowed.
+5.	Projects that do not fulfil any of the above requirements will not be allowed. 
+6.	Git version control needs to be used from the start of the project and all files need to be uploaded to GitHub and the repository needs to be made public.
+
+Please note that if any candidate is found not following all the corporate compliances or the guidelines listed above, the candidate will be disqualified.
+Such decision will be final and no further students – trainer discussions will be allowed.

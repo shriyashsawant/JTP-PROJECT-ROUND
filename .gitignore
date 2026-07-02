@@ -1,0 +1,80 @@
+# Environments
+.env
+.env.local
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Node / Frontend
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn.log
+.next/
+out/
+build/
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Database / Large Data
+backend/data/*.csv
+backend/data/*.json
+backend/data/*.sqlite
+_last_query_vectors.json
+live_query.py
+
+# Test artifacts
+backend/_test_*.py
+
+# Development / agent config
+.agents/
+.claude/
+skills-lock.json
+note_analysis.json
+FRONTEND_REQUIREMENTS.md
+Links_and _website.txt
+
+# Reference projects (not part of main codebase)
+PerfumeFinder-main/
+scentmatch-app-main/
+DA_Fragrance_Analysis-main/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
