@@ -1,6 +1,10 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 
+class MatchCriterion(BaseModel):
+    label: str
+    status: Literal["met", "partial", "unmet"]
+
 class ContextSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Natural language query or scenario keyword")
     budget: Optional[float] = Field(None, ge=0, description="Max price in INR")
@@ -38,6 +42,10 @@ class PerfumeResponse(BaseModel):
     image_url: Optional[str] = None
     savings: Optional[float] = None
     explanation: Optional[str] = None
+    estimated_wear_hours: Optional[str] = None
+    projection_label: Optional[str] = None
+    best_for: list[str] = []
+    match_breakdown: list[MatchCriterion] = []
 
 class PerfumeDetailResponse(BaseModel):
     id: int

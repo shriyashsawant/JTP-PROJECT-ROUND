@@ -36,7 +36,8 @@ def _format_perfume_row(r) -> dict:
 async def search_by_context(
     db, query: str, budget: float = None, limit: int = 5,
     scenarios: list[str] = None, skin_type: str = None, raw_query: str = "",
-    gender: str = None, longevity_requested: bool = False,
+    gender: str = None, age: int = None, longevity_requested: bool = False,
+    hours_required: int = None, projection_preference: str = None,
 ) -> list[dict]:
     embedding = generate_embedding(query)
     pool_size = _candidate_pool_size(limit)
@@ -55,14 +56,16 @@ async def search_by_context(
     results = [_format_perfume_row(r) for r in rows]
     return rank_and_explain(
         results, query=raw_query, budget=budget, scenarios=scenarios, skin_type=skin_type,
-        gender=gender, longevity_requested=longevity_requested, limit=limit,
+        gender=gender, age=age, longevity_requested=longevity_requested,
+        hours_required=hours_required, projection_preference=projection_preference, limit=limit,
     )
 
 
 async def search_by_budget(
     db, query: str, budget: float, limit: int = 6,
     scenarios: list[str] = None, skin_type: str = None, raw_query: str = "",
-    gender: str = None, longevity_requested: bool = False,
+    gender: str = None, age: int = None, longevity_requested: bool = False,
+    hours_required: int = None, projection_preference: str = None,
 ) -> list[dict]:
     embedding = generate_embedding(query)
     pool_size = _candidate_pool_size(limit)
@@ -81,7 +84,8 @@ async def search_by_budget(
     results = [_format_perfume_row(r) for r in rows]
     return rank_and_explain(
         results, query=raw_query, budget=budget, scenarios=scenarios, skin_type=skin_type,
-        gender=gender, longevity_requested=longevity_requested, limit=limit,
+        gender=gender, age=age, longevity_requested=longevity_requested,
+        hours_required=hours_required, projection_preference=projection_preference, limit=limit,
     )
 
 

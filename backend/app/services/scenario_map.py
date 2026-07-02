@@ -5,6 +5,7 @@ AuraMatch AI - Scenario to Notes/Accords Mapping
 SCENARIO_MAP = {
     "gym": {
         "label": "Gym & Sports",
+        "vibe": "dynamic and energizing",
         "description": "Light, fresh, high-energy scents that won't overpower",
         "accords": [
             "aquatic",
@@ -28,6 +29,7 @@ SCENARIO_MAP = {
     },
     "summer": {
         "label": "Summer",
+        "vibe": "light and refreshing",
         "description": "Light, airy, refreshing scents for hot weather",
         "accords": [
             "aquatic",
@@ -52,6 +54,7 @@ SCENARIO_MAP = {
     },
     "winter": {
         "label": "Winter",
+        "vibe": "warm and comforting",
         "description": "Warm, rich, cozy scents that last in cold weather",
         "accords": [
             "warm spicy",
@@ -78,6 +81,7 @@ SCENARIO_MAP = {
     },
     "monsoon": {
         "label": "Monsoon & Rainy",
+        "vibe": "fresh and earthy",
         "description": "Fresh, green, petrichor-inspired scents for humid weather",
         "accords": [
             "green",
@@ -101,6 +105,7 @@ SCENARIO_MAP = {
     },
     "office": {
         "label": "Office & Work",
+        "vibe": "refined and non-intrusive",
         "description": "Professional, subtle, clean scents that won't distract",
         "accords": [
             "fresh",
@@ -126,6 +131,7 @@ SCENARIO_MAP = {
     },
     "party": {
         "label": "Party & Night Out",
+        "vibe": "bold and vibrant",
         "description": "Bold, loud, attention-grabbing scents",
         "accords": [
             "sweet",
@@ -152,6 +158,7 @@ SCENARIO_MAP = {
     },
     "date": {
         "label": "Date Night",
+        "vibe": "alluring and captivating",
         "description": "Romantic, alluring, intimate scents",
         "accords": [
             "sweet",
@@ -177,6 +184,7 @@ SCENARIO_MAP = {
     },
     "wedding": {
         "label": "Wedding & Festival",
+        "vibe": "elegant and celebratory",
         "description": "Elegant, sophisticated, celebratory scents",
         "accords": [
             "floral",
@@ -202,6 +210,7 @@ SCENARIO_MAP = {
     },
     "daily": {
         "label": "Daily Wear",
+        "vibe": "versatile and easygoing",
         "description": "Versatile, easy-going scents for everyday use",
         "accords": [
             "citrus",
@@ -228,6 +237,7 @@ SCENARIO_MAP = {
     },
     "evening": {
         "label": "Evening",
+        "vibe": "sophisticated and elegant",
         "description": "Warm, sensual scents that transition from day to night",
         "accords": [
             "amber",
@@ -254,12 +264,14 @@ SCENARIO_MAP = {
     },
     "spring": {
         "label": "Spring",
+        "vibe": "vibrant and uplifting",
         "description": "Uplifting, floral, and vibrant scents for blooming weather",
         "accords": ["floral", "green", "fresh", "fruity", "aromatic"],
         "notes": ["neroli", "lily-of-the-valley", "jasmine", "green tea", "apple", "peach", "vetiver"]
     },
     "autumn": {
         "label": "Autumn / Fall",
+        "vibe": "warm and grounded",
         "description": "Crisp, woody, and gently spiced scents",
         "accords": ["woody", "warm spicy", "earthy", "amber", "leather"],
         "notes": ["cedar", "sandalwood", "cardamom", "nutmeg", "patchouli", "vetiver", "plum"]
@@ -436,6 +448,88 @@ SILLAGE_ACCORD_WEIGHTS = {
 
 # "Power notes" - individual notes known for outsized longevity/projection regardless of accord family.
 POWER_NOTES = ["agarwood (oud)", "oud", "musk", "amber", "sandalwood", "patchouli", "vanilla", "tonka bean", "labdanum"]
+
+# longevity_score (0-100 heuristic) -> human-readable estimated wear time, for display
+# and for enforcing explicit hour requirements ("8+ hours") rather than an abstract score.
+LONGEVITY_HOUR_BUCKETS = [
+    (30, "2-4 hours"),
+    (50, "4-6 hours"),
+    (70, "6-8 hours"),
+    (85, "8-10 hours"),
+    (101, "10+ hours"),
+]
+
+# sillage_score (0-100 heuristic) -> projection label, for display and for matching
+# an explicitly requested projection preference ("moderate projection", "beast mode"...).
+SILLAGE_LABEL_BUCKETS = [
+    (35, "light"),
+    (65, "moderate"),
+    (101, "strong"),
+]
+
+PROJECTION_HINTS = {
+    "light": ["light projection", "subtle", "skin scent", "close to skin", "soft projection", "not too strong"],
+    "moderate": ["moderate projection", "medium projection", "balanced projection"],
+    "strong": ["strong projection", "heavy sillage", "beast mode", "loud", "projects a lot", "room-filling"],
+}
+
+# Explicit hour requirements in free text ("8+ hours", "lasts 6-8 hours") - parsed via regex
+# in intent_detector.py, not a simple keyword list.
+LONGEVITY_HOUR_PATTERN = r"(\d{1,2})\s*\+?\s*(?:-\s*\d{1,2}\s*)?(?:hour|hr)s?"
+
+# Age -> accord-tier affinity, sourced from industry/consumer research (fragrance retailer
+# and market-segmentation write-ups consistently report this directional pattern across
+# independent sources): younger buyers skew fresh/citrus/fruity/light-gourmand, 25-40 skews
+# toward woody/spicy/oriental/gourmand, 40+ skews toward classic florals/amber/woody/powdery.
+# This is a population-level marketing trend, NOT a hard rule or peer-reviewed finding -
+# used as a small, capped nudge (see decision_engine.age_fit), never a hard filter, and the
+# explanation text says so explicitly when it's a deciding factor.
+AGE_BRACKET_ACCORDS = {
+    "under_25": ["citrus", "fresh", "aquatic", "green", "ozonic", "marine", "fruity", "tropical", "sweet"],
+    "25_40": ["woody", "warm spicy", "amber", "vanilla", "spicy", "aromatic"],
+    "40_plus": ["woody", "amber", "balsamic", "leather", "floral", "white floral", "powdery", "aldehydic", "oud"],
+}
+
+
+def age_to_bracket(age):
+    """Map an age (int) to an AGE_BRACKET_ACCORDS key, or None if age is unknown."""
+    if age is None:
+        return None
+    if age < 25:
+        return "under_25"
+    if age <= 40:
+        return "25_40"
+    return "40_plus"
+
+
+def estimate_wear_hours(longevity_score) -> str:
+    """Convert a 0-100 longevity_score into a human-readable estimated wear range."""
+    if longevity_score is None:
+        return "Unknown"
+    for threshold, label in LONGEVITY_HOUR_BUCKETS:
+        if longevity_score < threshold:
+            return label
+    return LONGEVITY_HOUR_BUCKETS[-1][1]
+
+
+def estimate_hours_numeric(longevity_score) -> float:
+    """Rough numeric midpoint (hours) for a longevity_score, used to compare against an
+    explicit hour requirement like '8+ hours'."""
+    if longevity_score is None:
+        return 4.0
+    label = estimate_wear_hours(longevity_score)
+    lo, hi = label.replace(" hours", "").replace("+", "-99").split("-")
+    return (float(lo) + min(float(hi), float(lo) + 4)) / 2
+
+
+def sillage_label(sillage_score) -> str:
+    """Convert a 0-100 sillage_score into a light/moderate/strong projection label."""
+    if sillage_score is None:
+        return "unknown"
+    for threshold, label in SILLAGE_LABEL_BUCKETS:
+        if sillage_score < threshold:
+            return label
+    return SILLAGE_LABEL_BUCKETS[-1][1]
 
 
 def get_scenario_keys(scenario: str):
