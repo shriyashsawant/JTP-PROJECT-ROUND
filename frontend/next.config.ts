@@ -2,7 +2,18 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  typescript: { ignoreBuildErrors: true },
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "static.luckyscent.com",
+      },
+      {
+        protocol: "https",
+        hostname: "cdn.shopify.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

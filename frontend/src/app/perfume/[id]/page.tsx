@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { motion } from "framer-motion";
 import { ArrowLeft, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,32 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getPerfumeById } from "@/lib/api";
 import type { PerfumeDetail } from "@/lib/api";
+
+function PerfumeHero({ perfume }: { perfume: PerfumeDetail }) {
+  const [failed, setFailed] = useState(false);
+  if (!perfume.image_url || failed) {
+    return (
+      <div className="flex h-64 w-full items-center justify-center rounded-xl bg-secondary sm:w-48">
+        <span className="text-4xl font-bold text-muted-foreground/30">
+          {perfume.brand.charAt(0)}
+          {perfume.perfume.charAt(0)}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="relative h-64 w-full overflow-hidden rounded-xl bg-secondary sm:w-48">
+      <Image
+        src={perfume.image_url}
+        alt={`${perfume.brand} ${perfume.perfume}`}
+        fill
+        sizes="(max-width: 640px) 100vw, 192px"
+        className="object-cover"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
 
 export default function PerfumeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -83,13 +110,7 @@ export default function PerfumeDetailPage() {
       </Link>
 
       <div className="flex flex-col gap-8 sm:flex-row">
-        {/* Image placeholder */}
-        <div className="flex h-64 w-full items-center justify-center rounded-xl bg-secondary sm:w-48">
-          <span className="text-4xl font-bold text-muted-foreground/30">
-            {perfume.brand.charAt(0)}
-            {perfume.perfume.charAt(0)}
-          </span>
-        </div>
+        <PerfumeHero perfume={perfume} />
 
         <div className="flex-1 space-y-4">
           <div>

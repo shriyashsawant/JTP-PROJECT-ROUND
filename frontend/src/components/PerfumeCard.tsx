@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import Image from "next/image";
 import { Star, Check, Minus, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -11,6 +13,32 @@ function StatusIcon({ status }: { status: "met" | "partial" | "unmet" }) {
   if (status === "met") return <Check size={12} className="text-emerald-600" />;
   if (status === "partial") return <Minus size={12} className="text-amber-500" />;
   return <X size={12} className="text-red-400" />;
+}
+
+function PerfumeThumbnail({ perfume }: { perfume: Perfume }) {
+  const [failed, setFailed] = useState(false);
+  if (!perfume.image_url || failed) {
+    return (
+      <div className="flex h-32 w-full items-center justify-center rounded-lg bg-secondary">
+        <span className="text-2xl font-bold text-muted-foreground/30">
+          {perfume.brand.charAt(0)}
+          {perfume.perfume.charAt(0)}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="relative h-32 w-full overflow-hidden rounded-lg bg-secondary">
+      <Image
+        src={perfume.image_url}
+        alt={`${perfume.brand} ${perfume.perfume}`}
+        fill
+        sizes="(max-width: 640px) 100vw, 33vw"
+        className="object-cover"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
 }
 
 export default function PerfumeCard({
@@ -31,6 +59,8 @@ export default function PerfumeCard({
       <Link href={`/perfume/${perfume.id}`}>
         <Card className="group h-full transition-all hover:-translate-y-1 hover:shadow-lg">
           <CardContent className="flex flex-col gap-3 p-5">
+            <PerfumeThumbnail perfume={perfume} />
+
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">

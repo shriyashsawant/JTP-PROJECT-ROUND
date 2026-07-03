@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,20 @@ function toggle(list: string[], value: string): string[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
+const MAX_BUDGET = 15000;
+const STORAGE_KEY = "auramatch_search_state";
+
+interface StoredSearchState {
+  query: string;
+  budget: number[];
+  scenario: string[];
+  noteFamilies: string[];
+  skinType: string;
+  gender: string;
+  age: string;
+  results: Perfume[] | null;
+}
+
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const [budget, setBudget] = useState([5000]);
@@ -64,6 +78,45 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [needsBudget, setNeedsBudget] = useState(false);
+  const [restored, setRestored] = useState(false);
+
+  // Restore the last search (query, filters, results) if the user navigated
+  // away (e.g. into a perfume detail page) and came back - without this, the
+  // "Back to results" link always lands on a blank form.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const saved: StoredSearchState = JSON.parse(raw);
+        setQuery(saved.query);
+        setBudget(saved.budget);
+        setScenario(saved.scenario);
+        setNoteFamilies(saved.noteFamilies);
+        setSkinType(saved.skinType);
+        setGender(saved.gender);
+        setAge(saved.age);
+        setResults(saved.results);
+      }
+    } catch {
+      // Corrupt or unavailable storage - just start fresh.
+    } finally {
+      setRestored(true);
+    }
+  }, []);
+
+  // Persist on every change once the initial restore has happened, so a
+  // mid-session filter tweak isn't lost either.
+  useEffect(() => {
+    if (!restored) return;
+    const state: StoredSearchState = {
+      query, budget, scenario, noteFamilies, skinType, gender, age, results,
+    };
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // Storage full or unavailable - persistence is a nice-to-have, not critical.
+    }
+  }, [restored, query, budget, scenario, noteFamilies, skinType, gender, age, results]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -75,7 +128,8 @@ export default function SearchPage() {
     try {
       const data = await searchByContext({
         query: query.trim(),
-        budget: budget[0],
+        // "15,000+" on the slider means no upper limit, not a literal 15000 cap.
+        budget: budget[0] >= MAX_BUDGET ? undefined : budget[0],
         scenario: scenario.length ? scenario : undefined,
         skin_type: skinType || undefined,
         gender: gender || undefined,
@@ -214,6 +268,7 @@ export default function SearchPage() {
           >
             <label className="text-sm font-medium">
               Budget: ₹{budget[0].toLocaleString("en-IN")}
+              {budget[0] >= MAX_BUDGET ? "+ (no limit)" : ""}
             </label>
             <Slider
               value={budget}
@@ -221,12 +276,12 @@ export default function SearchPage() {
                 setBudget(v as number[]);
                 setNeedsBudget(false);
               }}
-              max={15000}
+              max={MAX_BUDGET}
               step={500}
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>₹0</span>
-              <span>₹15,000+</span>
+              <span>₹{MAX_BUDGET.toLocaleString("en-IN")}+</span>
             </div>
           </div>
 

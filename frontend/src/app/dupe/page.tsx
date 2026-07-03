@@ -1,13 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Loader2, IndianRupee } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import PerfumeCard from "@/components/PerfumeCard";
-import { searchByDupe } from "@/lib/api";
+import { searchByDupe, ClarificationNeededError } from "@/lib/api";
 import type { Perfume } from "@/lib/api";
+
+const STORAGE_KEY = "auramatch_dupe_state";
+
+interface StoredDupeState {
+  perfumeName: string;
+  budget: string;
+  results: Perfume[] | null;
+}
 
 export default function DupePage() {
   const [perfumeName, setPerfumeName] = useState("");
@@ -15,6 +23,35 @@ export default function DupePage() {
   const [results, setResults] = useState<Perfume[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [restored, setRestored] = useState(false);
+
+  // Same fix as the Vibe Check search page: restore the last search when the
+  // user navigates into a perfume detail page and comes back.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const saved: StoredDupeState = JSON.parse(raw);
+        setPerfumeName(saved.perfumeName);
+        setBudget(saved.budget);
+        setResults(saved.results);
+      }
+    } catch {
+      // Corrupt or unavailable storage - just start fresh.
+    } finally {
+      setRestored(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!restored) return;
+    const state: StoredDupeState = { perfumeName, budget, results };
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // Storage full or unavailable - persistence is a nice-to-have, not critical.
+    }
+  }, [restored, perfumeName, budget, results]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,7 +68,11 @@ export default function DupePage() {
       });
       setResults(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      if (err instanceof ClarificationNeededError) {
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      }
     } finally {
       setLoading(false);
     }
