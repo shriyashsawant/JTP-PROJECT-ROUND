@@ -27,10 +27,20 @@ def _scenario_terms(scenarios: list[str], key: str, cap: int) -> list[str]:
 
 def build_context_query(
     query: str, scenarios: list[str] = None, skin_type: str = None,
-    note_families: list[str] = None,
+    note_families: list[str] = None, reference_accords: list[str] = None,
+    reference_notes: list[str] = None,
 ) -> str:
-    """Build a rich search query from user input + optional scenarios + skin type + scent preference."""
+    """Build a rich search query from user input + optional scenarios + skin type + scent preference.
+
+    When the free-text query names a perfume we recognize (e.g. 'cheaper
+    alternative to Dior Sauvage'), `reference_accords`/`reference_notes` are
+    its REAL composition - grounding the embedding in actual scent data
+    instead of just hoping the model recognizes the name from text alone."""
     parts = [query]
+    if reference_accords:
+        parts.append(f"with {', '.join(reference_accords[:8])} character")
+    if reference_notes:
+        parts.append(f"featuring {', '.join(reference_notes[:10])} notes")
     accords = _scenario_terms(scenarios, "accords", 6)
     if accords:
         parts.append(f"scents that are {', '.join(accords)}")
@@ -45,10 +55,23 @@ def build_context_query(
 
 def build_budget_query(
     perfume_name: str, scenarios: list[str] = None, skin_type: str = None,
-    note_families: list[str] = None,
+    note_families: list[str] = None, reference_accords: list[str] = None,
+    reference_notes: list[str] = None,
 ) -> str:
-    """Build a query for dupe engine: find perfumes similar to this one."""
-    parts = [f"perfume similar to {perfume_name}"]
+    """Build a query for dupe engine: find perfumes similar to this one.
+
+    When the target perfume is found in our own DB, `reference_accords`/
+    `reference_notes` are its REAL composition - grounding the embedding in
+    actual scent data instead of just hoping the model recognizes the name.
+    Without a match, this falls back to name-only best-effort search."""
+    if reference_accords or reference_notes:
+        parts = [f"perfume similar to {perfume_name}"]
+        if reference_accords:
+            parts.append(f"with {', '.join(reference_accords[:8])} character")
+        if reference_notes:
+            parts.append(f"featuring {', '.join(reference_notes[:10])} notes")
+    else:
+        parts = [f"perfume similar to {perfume_name}"]
     notes = _scenario_terms(scenarios, "notes", 8)
     if notes:
         parts.append(f"with {', '.join(notes)} notes")

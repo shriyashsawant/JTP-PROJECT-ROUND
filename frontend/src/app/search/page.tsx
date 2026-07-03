@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import PerfumeCard from "@/components/PerfumeCard";
-import { searchByContext } from "@/lib/api";
+import { searchByContext, ClarificationNeededError } from "@/lib/api";
 import type { Perfume } from "@/lib/api";
 
 const scenarios = [
@@ -63,12 +63,14 @@ export default function SearchPage() {
   const [results, setResults] = useState<Perfume[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [needsBudget, setNeedsBudget] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!query.trim()) return;
     setLoading(true);
     setError("");
+    setNeedsBudget(false);
     setResults(null);
     try {
       const data = await searchByContext({
@@ -82,7 +84,12 @@ export default function SearchPage() {
       });
       setResults(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      if (err instanceof ClarificationNeededError) {
+        setError(err.message);
+        if (err.field === "budget") setNeedsBudget(true);
+      } else {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      }
     } finally {
       setLoading(false);
     }
@@ -200,13 +207,20 @@ export default function SearchPage() {
             </div>
           </div>
 
-          <div className="space-y-3">
+          <div
+            className={`space-y-3 rounded-lg p-3 transition-colors ${
+              needsBudget ? "ring-2 ring-amber-400 bg-amber-50" : ""
+            }`}
+          >
             <label className="text-sm font-medium">
               Budget: ₹{budget[0].toLocaleString("en-IN")}
             </label>
             <Slider
               value={budget}
-              onValueChange={(v) => setBudget(v as number[])}
+              onValueChange={(v) => {
+                setBudget(v as number[]);
+                setNeedsBudget(false);
+              }}
               max={15000}
               step={500}
             />
@@ -226,7 +240,12 @@ export default function SearchPage() {
           </Button>
         </form>
 
-        {error && (
+        {error && needsBudget && (
+          <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {error} Adjust the budget slider above and try again.
+          </div>
+        )}
+        {error && !needsBudget && (
           <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
             <button onClick={handleSubmit} className="ml-2 font-medium underline">

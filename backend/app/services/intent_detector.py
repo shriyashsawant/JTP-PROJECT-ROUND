@@ -7,7 +7,8 @@ matching, consistent with the project's "no external LLM" design.
 import re
 from app.services.scenario_map import (
     SCENARIO_KEYWORDS, LONGEVITY_PHRASES, MALE_HINTS, FEMALE_HINTS,
-    PROJECTION_HINTS, LONGEVITY_HOUR_PATTERN,
+    PROJECTION_HINTS, LONGEVITY_HOUR_PATTERN, DUPE_INTENT_PHRASES,
+    BUDGET_TEXT_PATTERNS,
 )
 
 
@@ -69,4 +70,36 @@ def detect_projection_preference(raw_query: str) -> str | None:
     for label, phrases in PROJECTION_HINTS.items():
         if any(p in q for p in phrases):
             return label
+    return None
+
+
+def detect_dupe_intent(raw_query: str) -> bool:
+    """True if the query is asking for a cheaper/similar alternative to a named
+    perfume (e.g. 'cheaper alternative to Dior Sauvage', 'dupe for Bleu de Chanel',
+    'cheap dupe') - whether typed into free-text search or the dedicated dupe
+    form. The bare word "dupe" is checked as its own word (not just inside
+    fixed phrases like "dupe for") so any adjective in front of it ("cheap
+    dupe", "a dupe", "find me a dupe") is still caught."""
+    if not raw_query:
+        return False
+    q = raw_query.lower()
+    if re.search(r"\bdupe(s)?\b", q):
+        return True
+    return any(phrase in q for phrase in DUPE_INTENT_PHRASES)
+
+
+def detect_budget_from_text(raw_query: str) -> float | None:
+    """Parse an explicit price ceiling from free text ('under Rs 500', 'within
+    a 1000 budget'). This is explicit user input, distinct from any reference-
+    perfume-price auto-default, and must always take priority over it."""
+    if not raw_query:
+        return None
+    q = raw_query.lower()
+    for pattern in BUDGET_TEXT_PATTERNS:
+        match = re.search(pattern, q)
+        if match:
+            try:
+                return float(match.group(1).replace(",", ""))
+            except ValueError:
+                continue
     return None

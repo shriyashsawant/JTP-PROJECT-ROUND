@@ -4,6 +4,7 @@ Hybrid scoring + deterministic explanation generator.
 Modular: swap `scorer` and `explainer` with an LLM later (just implement the same interface).
 """
 import random
+import re
 from typing import Optional
 from app.services.scenario_map import (
     SCENARIO_MAP, AGE_BRACKET_ACCORDS, age_to_bracket,
@@ -96,6 +97,87 @@ def _projection_fit(sillage_score: Optional[float], projection_preference: Optio
         return 0.6
     diff = abs(order.index(actual) - order.index(projection_preference))
     return {0: 1.0, 1: 0.6, 2: 0.2}[diff]
+
+
+def _normalize_for_match(text: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace - keeps word boundaries
+    intact (unlike stripping spaces entirely) so phrase matching stays accurate."""
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _contains_phrase(query_norm: str, phrase_norm: str) -> bool:
+    """Word-boundary phrase search - NOT a raw substring check, so a perfume
+    named e.g. 'Ice' can't false-positive match inside 'notice' or 'spice'."""
+    if not phrase_norm:
+        return False
+    return re.search(rf"\b{re.escape(phrase_norm)}\b", query_norm) is not None
+
+
+IDENTITY_BONUS_EXACT = 35.0    # query IS "brand perfume", nothing else (e.g. "Dior Sauvage Elixir" naming that exact flanker)
+IDENTITY_BONUS_FULL = 30.0     # "brand perfume" as one contiguous phrase, but query has extra words beyond it
+IDENTITY_BONUS_BOTH = 25.0     # brand and perfume both present, not contiguous
+IDENTITY_BONUS_NAME = 15.0     # perfume name alone
+IDENTITY_BONUS_BRAND = 8.0     # brand alone (least specific - many products share it)
+
+
+def _identity_boost(raw_query: str, brand: str, perfume_name: str) -> tuple[float, Optional[str]]:
+    """Deterministic lexical boost: if the user's raw query literally names this
+    exact perfume or brand, spike its score - bypassing embedding fuzziness
+    entirely for the 'I want THIS specific perfume' case. Zero latency, zero new
+    dependencies, zero DB/schema risk. Length guards on each tier prevent short/
+    generic names from false-positive-boosting unrelated results."""
+    if not raw_query:
+        return 0.0, None
+    q = _normalize_for_match(raw_query)
+    if len(q) < 3:
+        return 0.0, None
+    b = _normalize_for_match(brand)
+    p = _normalize_for_match(perfume_name)
+    label = f"{brand} — {perfume_name}"
+
+    combined = f"{b} {p}".strip()
+    if len(combined) >= 6 and _contains_phrase(q, combined):
+        # An EXACT match (query is precisely this brand+name, e.g. "Dior Sauvage
+        # Elixir" naming that flanker exactly) gets a distinct, higher tier than
+        # a partial match (e.g. the same query also contains "Dior Sauvage" as a
+        # substring, matching the base "Sauvage" row too). Without this
+        # separation both would round to the same capped 100 score and the
+        # display would show a coin-flip order between the specific flanker
+        # the user actually asked for and a shorter, less specific variant.
+        if q == combined:
+            return IDENTITY_BONUS_EXACT, label
+        return IDENTITY_BONUS_FULL, label
+    if len(p) >= 4 and len(b) >= 3 and _contains_phrase(q, p) and _contains_phrase(q, b):
+        return IDENTITY_BONUS_BOTH, label
+    if len(p) >= 4 and _contains_phrase(q, p):
+        return IDENTITY_BONUS_NAME, perfume_name
+    if len(b) >= 4 and _contains_phrase(q, b):
+        return IDENTITY_BONUS_BRAND, brand
+    return 0.0, None
+
+
+def _jaccard(a: list[str], b: list[str]) -> float:
+    """Real set-overlap similarity (intersection / union), 0-1. 0 if either side is empty."""
+    a_set, b_set = {x.lower() for x in (a or [])}, {y.lower() for y in (b or [])}
+    if not a_set or not b_set:
+        return 0.0
+    return len(a_set & b_set) / len(a_set | b_set)
+
+
+def _reference_fit(
+    candidate_accords: list[str], candidate_notes: list[str],
+    reference_accords: list[str], reference_notes: list[str],
+) -> float:
+    """Real, quantitative composition similarity to a named reference perfume
+    (the 'dupe engine' case) - accords weighted higher than notes since they
+    summarize the perfume's overall character, notes are granular ingredients.
+    This replaces guessing via raw-text embedding similarity with an actual
+    calculated overlap between the two perfumes' real compositions."""
+    accord_sim = _jaccard(candidate_accords, reference_accords)
+    note_sim = _jaccard(candidate_notes, reference_notes)
+    return accord_sim * 0.65 + note_sim * 0.35
 
 
 def _age_fit(perfume_accords: list[str], age: Optional[int]) -> float:
@@ -246,10 +328,11 @@ def _build_highlights(
     rng: random.Random,
     perfume_accords: list[str],
     scenario_labels: list[str], scenario_fit: float,
-    matched_notes: list[str], matched_accords: list[str], note_match: float,
+    matched_notes: list[str], matched_accords: list[str],
     longevity_requested: bool, hours_required: Optional[int], longevity_fit: float, longevity_score: Optional[float],
     projection_preference: Optional[str], projection_fit: float, sillage_score: Optional[float],
     gender_matched: bool,
+    identity_label: Optional[str] = None,
 ) -> list[str]:
     """The accord/note signature is ALWAYS this specific perfume's own composition
     (never generic), so it anchors every explanation and guarantees cards differ
@@ -259,13 +342,16 @@ def _build_highlights(
     of something already true for every result. Phrasing is picked from small
     template pools seeded by the perfume's own identity, so cards vary in
     sentence rhythm as well as content."""
+    highlights = []
+    if identity_label:
+        highlights.append(f"This is an exact match for **{identity_label}** you searched for.")
+
     signature_parts = []
     if matched_notes:
         signature_parts.append(f"prominent {', '.join(matched_notes[:3])} notes")
     accord_display = matched_accords[:3] if matched_accords else (perfume_accords or [])[:3]
     if accord_display:
         signature_parts.append(f"{', '.join(accord_display)} character")
-    highlights = []
     if signature_parts:
         highlights.append(rng.choice(SIGNATURE_TEMPLATES).format(parts=" and ".join(signature_parts)))
 
@@ -324,10 +410,10 @@ CONFIDENCE_HIGH = ["This is a top-tier recommendation.", "A standout pick from t
 CONFIDENCE_MID = ["A highly recommended option.", "Well worth a closer look.", "A strong contender for your shortlist."]
 CONFIDENCE_LOW = ["A solid choice worth considering.", "Worth a sample before committing.", "A reasonable option to explore."]
 
-DEFAULT_VIBE = "expertly tailored"
+DEFAULT_VIBE = "carefully tailored"
 
 
-def _vibe_phrase(scenario_labels: list[str], scenarios: Optional[list[str]]) -> str:
+def _vibe_phrase(scenarios: Optional[list[str]]) -> str:
     """Evocative adjective pair drawn from the actually-detected scenario(s), not a
     crude keyword guess - reuses the same scenario detection already driving the score."""
     vibes = [SCENARIO_MAP[s]["vibe"] for s in (scenarios or []) if s in SCENARIO_MAP and "vibe" in SCENARIO_MAP[s]]
@@ -356,7 +442,7 @@ def generate_explanation(
     projection_fit: float = 1.0,
     sillage_score: Optional[float] = None,
     scenario_fit: float = 1.0,
-    note_match: float = 0.0,
+    identity_label: Optional[str] = None,
 ) -> str:
     """Deterministic explanation that reads like an LLM wrote it. No API calls, ~0.001s.
 
@@ -369,7 +455,7 @@ def generate_explanation(
     matched_notes = _match_notes(query_terms, perfume_notes)
     matched_accords = _match_accords(query_terms, perfume_accords)
     scenario_labels = [SCENARIO_MAP[s]["label"] for s in (scenarios or []) if s in SCENARIO_MAP]
-    vibe = _vibe_phrase(scenario_labels, scenarios)
+    vibe = _vibe_phrase(scenarios)
 
     if match_score >= 80:
         opening = rng.choice(OPENING_TEMPLATES_HIGH)
@@ -383,9 +469,10 @@ def generate_explanation(
 
     highlights = _build_highlights(
         rng, perfume_accords,
-        scenario_labels, scenario_fit, matched_notes, matched_accords, note_match,
+        scenario_labels, scenario_fit, matched_notes, matched_accords,
         longevity_requested, hours_required, longevity_fit, longevity_score,
         projection_preference, projection_fit, sillage_score, gender_matched,
+        identity_label,
     )
     highlight_text = " ".join(highlights)
 
@@ -413,13 +500,19 @@ def _build_breakdown(
     projection_preference: Optional[str], projection_fit: float,
     gender: Optional[str], gender_matched: bool, gender_fit: float,
     price_inr: Optional[float], budget: Optional[float],
+    identity_label: Optional[str] = None,
+    has_reference: bool = False,
 ) -> list[dict]:
     """Only lists criteria the user actually signalled - matches the 'why it
     scored highly' checklist, not every possible scoring dimension."""
     items = []
+    if identity_label:
+        items.append({"label": f"Exact match: {identity_label}", "status": "met"})
     if scenario_labels:
         items.append({"label": f"Occasion: {', '.join(scenario_labels)}", "status": _breakdown_status(scenario_fit)})
-    if note_match > 0.15:
+    if has_reference:
+        items.append({"label": f"Composition overlap: {round(note_match * 100)}%", "status": _breakdown_status(note_match, 0.5, 0.2)})
+    elif note_match > 0.15:
         items.append({"label": "Scent profile match", "status": _breakdown_status(note_match, 0.6, 0.25)})
     if hours_required:
         items.append({"label": f"{hours_required}+ hour longevity", "status": _breakdown_status(longevity_fit)})
@@ -450,13 +543,21 @@ def rank_and_explain(
     hours_required: Optional[int] = None,
     projection_preference: Optional[str] = None,
     limit: Optional[int] = None,
+    reference_accords: Optional[list[str]] = None,
+    reference_notes: Optional[list[str]] = None,
 ) -> list[dict]:
     """
     Takes raw DB results (already a widened ANN candidate pool), applies hybrid
     scoring + reranking, generates explanations, and truncates to `limit`.
+
+    `reference_accords`/`reference_notes` are the REAL composition of a named
+    target perfume (the 'find a cheaper alternative to X' case) - when present,
+    the scent-profile score is a real calculated overlap against that specific
+    perfume rather than fuzzy text-vs-query matching.
     """
     query_terms = query.lower().split()
     scenario_labels = [SCENARIO_MAP[s]["label"] for s in (scenarios or []) if s in SCENARIO_MAP]
+    has_reference = bool(reference_accords or reference_notes)
 
     for r in results:
         raw_sim = r.get("similarity")
@@ -471,9 +572,14 @@ def rank_and_explain(
         perfume_notes = r.get("notes", [])
         perfume_accords = r.get("main_accords", [])
 
-        matched_notes = _match_notes(query_terms, perfume_notes)
-        matched_accords = _match_accords(query_terms, perfume_accords)
-        note_match = min(1.0, (len(matched_notes) + len(matched_accords)) / 5.0)
+        if has_reference:
+            note_match = _reference_fit(perfume_accords, perfume_notes, reference_accords, reference_notes)
+            matched_notes = [n for n in perfume_notes if n.lower() in {x.lower() for x in (reference_notes or [])}]
+            matched_accords = [a for a in perfume_accords if a.lower() in {x.lower() for x in (reference_accords or [])}]
+        else:
+            matched_notes = _match_notes(query_terms, perfume_notes)
+            matched_accords = _match_accords(query_terms, perfume_accords)
+            note_match = min(1.0, (len(matched_notes) + len(matched_accords)) / 5.0)
 
         perfume_gender = r.get("gender")
         gender_matched = bool(gender and perfume_gender and perfume_gender == gender)
@@ -488,11 +594,18 @@ def rank_and_explain(
         scenario_fit = _scenario_fit(perfume_accords, scenarios or [])
         age_fit = _age_fit(perfume_accords, age)
 
-        r["match_score"] = hybrid_score(
+        base_score = hybrid_score(
             cos_sim, price, budget, note_match=note_match,
             gender_fit=gender_fit, longevity_fit=longevity_fit,
             scenario_fit=scenario_fit, projection_fit=projection_fit, age_fit=age_fit,
         )
+        identity_bonus, identity_label = _identity_boost(query, r.get("brand", ""), r.get("perfume", ""))
+        # Keep the uncapped score for sorting - two results that both exceed
+        # 100 and get capped to the same displayed value would otherwise tie
+        # and fall back to incidental input order, silently discarding a real
+        # difference (e.g. a more specific flanker match vs. a partial one).
+        r["_raw_score"] = base_score + identity_bonus
+        r["match_score"] = min(100.0, round(base_score + identity_bonus, 1))
         r["savings"] = round(budget - price, 2) if budget and price and price < budget else None
         r["estimated_wear_hours"] = estimate_wear_hours(longevity_score)
         r["projection_label"] = sillage_label(sillage_score)
@@ -502,7 +615,7 @@ def rank_and_explain(
             longevity_requested, hours_required, longevity_fit,
             projection_preference, projection_fit,
             gender, gender_matched, gender_fit,
-            price, budget,
+            price, budget, identity_label, has_reference,
         )
         r["explanation"] = generate_explanation(
             perfume_name=r.get("perfume", ""),
@@ -524,8 +637,10 @@ def rank_and_explain(
             projection_fit=projection_fit,
             sillage_score=sillage_score,
             scenario_fit=scenario_fit,
-            note_match=note_match,
+            identity_label=identity_label,
         )
 
-    results.sort(key=lambda x: x["match_score"], reverse=True)
+    results.sort(key=lambda x: x["_raw_score"], reverse=True)
+    for r in results:
+        r.pop("_raw_score", None)
     return results[:limit] if limit else results

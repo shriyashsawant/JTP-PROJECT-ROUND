@@ -477,6 +477,31 @@ PROJECTION_HINTS = {
 # in intent_detector.py, not a simple keyword list.
 LONGEVITY_HOUR_PATTERN = r"(\d{1,2})\s*\+?\s*(?:-\s*\d{1,2}\s*)?(?:hour|hr)s?"
 
+# Signals the user wants a cheaper/similar alternative to a named perfume (the
+# "dupe engine" intent), whether typed into the free-text search or the
+# dedicated dupe form. The bare word "dupe" is checked separately via
+# word-boundary regex (see detect_dupe_intent) so "cheap dupe", "a dupe",
+# "find a dupe" etc. are all caught without enumerating every adjective.
+DUPE_INTENT_PHRASES = [
+    "cheaper alternative", "cheaper version", "affordable alternative",
+    "budget alternative", "budget version", "clone of", "similar to",
+    "alternative to", "instead of", "smells like",
+]
+
+# An explicit price ceiling stated in free text ("under Rs 500", "within a
+# 1000 budget", "for under 800 rupees", "Rs. 500 budget") - this is EXPLICIT
+# user input and must always win over any auto-defaulted budget (e.g. a named
+# reference perfume's own price) or a slider default. A currency marker (or
+# the word "budget" itself) is REQUIRED before treating a number as a price -
+# without it, "under/within/less than" alone would false-positive on
+# unrelated numbers like "lasts under 8 hours" or "commute under 20km".
+BUDGET_TEXT_PATTERNS = [
+    r"(?:under|within|below|less than)\s*(?:rs\.?|inr|₹|rupees)\s*(\d[\d,]*)",
+    r"(?:under|within|below|less than)\s*(\d[\d,]*)\s*(?:rupees|rs\.?|inr)\b",
+    r"budget\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|rupees)?\s*(\d[\d,]*)",
+    r"(?:rs\.?|inr|₹)\s*(\d[\d,]*)\s*budget",
+]
+
 # Age -> accord-tier affinity, sourced from industry/consumer research (fragrance retailer
 # and market-segmentation write-ups consistently report this directional pattern across
 # independent sources): younger buyers skew fresh/citrus/fruity/light-gourmand, 25-40 skews

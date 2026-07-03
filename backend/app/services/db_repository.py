@@ -38,6 +38,8 @@ async def search_by_context(
     scenarios: list[str] = None, skin_type: str = None, raw_query: str = "",
     gender: str = None, age: int = None, longevity_requested: bool = False,
     hours_required: int = None, projection_preference: str = None,
+    exclude_id: int = None, reference_accords: list[str] = None, reference_notes: list[str] = None,
+    exclude_family_brand: str = None, exclude_family_name: str = None,
 ) -> list[dict]:
     embedding = generate_embedding(query)
     pool_size = _candidate_pool_size(limit)
@@ -47,18 +49,54 @@ async def search_by_context(
                gender, longevity_score, sillage_score,
                1 - (embedding <=> $1::vector) AS similarity
         FROM perfumes
-        WHERE ($2::float IS NULL OR price_inr <= $2)
+        WHERE ($2::float IS NULL OR price_inr <= $2) AND ($4::int IS NULL OR id != $4)
+          AND ($5::text IS NULL OR NOT (
+                (brand ILIKE '%' || $5 || '%' OR $5 ILIKE '%' || brand || '%')
+                AND (perfume ILIKE '%' || $6 || '%' OR $6 ILIKE '%' || perfume || '%')
+              ))
         ORDER BY similarity DESC
         LIMIT $3
     """
-    rows = await db.fetch(sql, _to_pgvector_literal(embedding), budget, pool_size)
+    rows = await db.fetch(sql, _to_pgvector_literal(embedding), budget, pool_size, exclude_id,
+                           exclude_family_brand, exclude_family_name)
 
     results = [_format_perfume_row(r) for r in rows]
     return rank_and_explain(
         results, query=raw_query, budget=budget, scenarios=scenarios, skin_type=skin_type,
         gender=gender, age=age, longevity_requested=longevity_requested,
         hours_required=hours_required, projection_preference=projection_preference, limit=limit,
+        reference_accords=reference_accords, reference_notes=reference_notes,
     )
+
+
+async def find_reference_perfume(db, query: str) -> dict | None:
+    """Look up the perfume the user is naming (e.g. 'Dior Sauvage') in our OWN
+    database, so the dupe engine can ground its search in that perfume's REAL
+    accords/notes instead of just hoping a generic embedding model 'knows'
+    what an arbitrary brand name smells like. Matches by checking whether
+    both the row's brand and perfume name appear as substrings of the query
+    text; prefers rows with real note data and the shortest (base/flagship)
+    name when several flankers match (e.g. 'Sauvage' over 'Sauvage Elixir')."""
+    if not query or len(query.strip()) < 3:
+        return None
+    sql = """
+        SELECT id, brand, perfume, main_accords, notes, price_inr, gender
+        FROM perfumes
+        WHERE length(brand) >= 3 AND length(perfume) >= 3
+          AND $1 ILIKE '%' || brand || '%'
+          AND $1 ILIKE '%' || perfume || '%'
+        ORDER BY (notes IS NULL OR array_length(notes, 1) IS NULL), length(perfume) ASC
+        LIMIT 1
+    """
+    row = await db.fetchrow(sql, query)
+    if not row:
+        return None
+    return {
+        "id": row["id"], "brand": row["brand"], "perfume": row["perfume"],
+        "main_accords": row["main_accords"] or [], "notes": row["notes"] or [],
+        "price_inr": float(row["price_inr"]) if row["price_inr"] else None,
+        "gender": row["gender"],
+    }
 
 
 async def search_by_budget(
@@ -66,6 +104,8 @@ async def search_by_budget(
     scenarios: list[str] = None, skin_type: str = None, raw_query: str = "",
     gender: str = None, age: int = None, longevity_requested: bool = False,
     hours_required: int = None, projection_preference: str = None,
+    exclude_id: int = None, reference_accords: list[str] = None, reference_notes: list[str] = None,
+    exclude_family_brand: str = None, exclude_family_name: str = None,
 ) -> list[dict]:
     embedding = generate_embedding(query)
     pool_size = _candidate_pool_size(limit)
@@ -75,17 +115,23 @@ async def search_by_budget(
                gender, longevity_score, sillage_score,
                1 - (embedding <=> $1::vector) AS similarity
         FROM perfumes
-        WHERE price_inr <= $2
+        WHERE price_inr <= $2 AND ($4::int IS NULL OR id != $4)
+          AND ($5::text IS NULL OR NOT (
+                (brand ILIKE '%' || $5 || '%' OR $5 ILIKE '%' || brand || '%')
+                AND (perfume ILIKE '%' || $6 || '%' OR $6 ILIKE '%' || perfume || '%')
+              ))
         ORDER BY similarity DESC
         LIMIT $3
     """
-    rows = await db.fetch(sql, _to_pgvector_literal(embedding), budget, pool_size)
+    rows = await db.fetch(sql, _to_pgvector_literal(embedding), budget, pool_size, exclude_id,
+                           exclude_family_brand, exclude_family_name)
 
     results = [_format_perfume_row(r) for r in rows]
     return rank_and_explain(
         results, query=raw_query, budget=budget, scenarios=scenarios, skin_type=skin_type,
         gender=gender, age=age, longevity_requested=longevity_requested,
         hours_required=hours_required, projection_preference=projection_preference, limit=limit,
+        reference_accords=reference_accords, reference_notes=reference_notes,
     )
 
 
