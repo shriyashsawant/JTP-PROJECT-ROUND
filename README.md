@@ -10,17 +10,18 @@ Traditional e-commerce recommendation systems rely on rigid keyword tags (e.g., 
 
 I chose to build AuraMatch to solve this friction point using **Machine Learning and Semantic Vector Search**. Instead of building another generic movie or book recommender, I engineered a highly niche domain (fragrance chemistry) that requires complex hybrid scoring: weighing **Semantic Cosine Similarity** against a dynamic **Price Optimization Decay** algorithm.
 
-## ✨ What Makes It Special? (The "LLM Illusion")
+## ✨ What Makes It Special? (Deterministic-First, LLM-Optional)
 
-AuraMatch features a **Retrieval-Augmented Generation (RAG) pipeline *without* an external LLM.** 
+AuraMatch's core pipeline is a **Retrieval-Augmented Generation (RAG) pipeline that works fully *without* an external LLM** - this is what makes it a genuinely plug-and-play Docker deployment with zero paid-API dependency.
 
-To guarantee a 100% stable, zero-latency, and plug-and-play Docker deployment without relying on fragile, paid API keys (like OpenAI), I engineered a **Deterministic Explanation Engine**. 
 1. The backend embeds the user's natural language query locally using `all-MiniLM-L6-v2`.
-2. It queries PostgreSQL (`pgvector`) for sub-50ms cosine similarity searches across 50,000+ scraped fragrances.
-3. A Hybrid Scorer algorithm ranks the results based on match quality and budget constraints.
+2. It queries PostgreSQL (`pgvector`) for sub-50ms cosine similarity searches across 40,000+ real fragrances.
+3. A Hybrid Scorer algorithm ranks the results on occasion/longevity/projection/note-match/gender/age/price fit.
 4. A deterministic heuristic engine cross-references the matched olfactory notes against the user's scenario to dynamically generate a human-readable explanation of *why* the perfume was chosen.
 
-It provides the UX benefits of a Generative AI pipeline with the speed and reliability of a localized microservice.
+**Optional LLM enrichment layer.** If a `GROQ_API_KEY` is set, an additional layer (`app/services/llm_enrichment.py`) sends the deterministic engine's own wider candidate pool (real accords/notes/scores already computed - never invented) to Groq's LLM, which can reorder/drop weak picks and write a richer, more natural explanation grounded strictly in that data. This is a pure enhancement: a strict 3-second timeout wraps the call, and *any* failure (missing key, timeout, network error, malformed response) silently falls back to the deterministic result untouched. `docker compose up` with no `.env` file at all runs the full app correctly in pure-deterministic mode - the LLM layer is additive, never required.
+
+It provides the UX benefits of a Generative AI pipeline with the speed and reliability of a localized microservice, and an optional, fail-safe path to genuine LLM-quality explanations when a key is available.
 
 ## 🏗️ Architecture & Tech Stack
 
@@ -73,7 +74,9 @@ This application is strictly self-contained. No external API keys, cloud databas
    - **Web Application (UI):** http://localhost:3000
    - **API Swagger Docs:** http://localhost:8000/docs
 
-> **Note:** The database container initializes with `01_schema.sql` and auto-loads a pre-seeded `02_seed_data.sql.gz` (31K+ perfumes with embeddings already computed) via Postgres's `docker-entrypoint-initdb.d` — no manual seeding step needed. To regenerate or expand the dataset yourself, run `python backend/seed_data.py --da-only --max 8000` (local CSV, no Kaggle needed) or without `--da-only` for the full ~50K-row Kaggle pipeline (requires `kagglehub`).
+> **Note:** The database container initializes with `01_schema.sql` and auto-loads a pre-seeded `02_seed_data.sql.gz` (40K+ perfumes with embeddings already computed) via Postgres's `docker-entrypoint-initdb.d` — no manual seeding step needed. To regenerate or expand the dataset yourself, run `python backend/seed_data.py --da-only --max 8000` (local CSV, no Kaggle needed) or without `--da-only` for the full Kaggle pipeline (requires `kagglehub`).
+
+> **Optional:** to enable the LLM re-ranking/explanation layer, copy `backend/.env.example` to `backend/.env` (for local runs) or drop a `.env` file with `GROQ_API_KEY=...` in the project root next to `docker-compose.yml` (Docker Compose reads it automatically for variable substitution). Without it, the app runs fully and correctly on the deterministic engine alone — this is optional, not required for "plug and play."
 
 ## 📂 Project Structure
 

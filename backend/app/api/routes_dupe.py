@@ -4,6 +4,8 @@ from app.models.schemas import BudgetSearchRequest, PerfumeResponse, PerfumeDeta
 from app.api.dependencies import get_db
 from app.services.db_repository import search_by_budget, get_perfume_by_id, find_reference_perfume
 from app.services.ml_engine import build_budget_query
+from app.services.llm_enrichment import enhance_with_llm
+from app.core.config import settings
 from app.services.intent_detector import (
     detect_scenarios, detect_gender, detect_longevity_intent,
     detect_longevity_hours_required, detect_projection_preference, detect_budget_from_text,
@@ -53,8 +55,14 @@ async def dupe_search(req: BudgetSearchRequest, conn: Connection = Depends(get_d
     if reference_accords or reference_notes:
         raw_query = f"{req.query} {' '.join(reference_accords or [])} {' '.join(reference_notes or [])}"
 
+    # Same optional LLM re-ranking pattern as context_search: fetch a wider
+    # deterministic pool for the LLM to choose from, fall back untouched on
+    # any failure or if no Groq key is configured.
+    llm_enabled = bool(settings.groq_api_key)
+    fetch_limit = min(25, req.limit * 5) if llm_enabled else req.limit
+
     results = await search_by_budget(
-        conn, enriched, budget, req.limit,
+        conn, enriched, budget, fetch_limit,
         scenarios=scenarios, skin_type=req.skin_type,
         raw_query=raw_query, gender=gender, age=req.age, longevity_requested=longevity_requested,
         hours_required=hours_required, projection_preference=projection_preference,
@@ -63,7 +71,12 @@ async def dupe_search(req: BudgetSearchRequest, conn: Connection = Depends(get_d
         exclude_family_brand=reference["brand"] if reference else None,
         exclude_family_name=reference["perfume"] if reference else None,
     )
-    return results
+
+    if llm_enabled:
+        enhanced = await enhance_with_llm(req.query, results, req.limit)
+        if enhanced:
+            return enhanced
+    return results[: req.limit]
 
 @router.get("/perfume/{perfume_id}", response_model=PerfumeDetailResponse)
 async def get_perfume(perfume_id: int, conn: Connection = Depends(get_db)):

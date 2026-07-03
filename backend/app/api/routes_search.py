@@ -4,6 +4,8 @@ from app.models.schemas import ContextSearchRequest, PerfumeResponse, HealthResp
 from app.api.dependencies import get_db
 from app.services.db_repository import search_by_context, check_health, find_reference_perfume
 from app.services.ml_engine import build_context_query
+from app.services.llm_enrichment import enhance_with_llm
+from app.core.config import settings
 from app.services.intent_detector import (
     detect_scenarios, detect_gender, detect_longevity_intent,
     detect_longevity_hours_required, detect_projection_preference, detect_dupe_intent,
@@ -81,8 +83,15 @@ async def context_search(req: ContextSearchRequest, conn: Connection = Depends(g
     if reference_accords or reference_notes:
         raw_query = f"{req.query} {' '.join(reference_accords or [])} {' '.join(reference_notes or [])}"
 
+    # When the optional LLM layer is configured, fetch a wider deterministically-
+    # ranked pool so it has real alternatives to choose from (not just the final
+    # top-N) - it can reorder/drop weak picks but never invent a perfume outside
+    # this pool. Any LLM failure falls back to the deterministic order untouched.
+    llm_enabled = bool(settings.groq_api_key)
+    fetch_limit = min(25, req.limit * 5) if llm_enabled else req.limit
+
     results = await search_by_context(
-        conn, enriched, budget, req.limit,
+        conn, enriched, budget, fetch_limit,
         scenarios=scenarios, skin_type=req.skin_type,
         raw_query=raw_query, gender=gender, age=req.age, longevity_requested=longevity_requested,
         hours_required=hours_required, projection_preference=projection_preference,
@@ -91,7 +100,12 @@ async def context_search(req: ContextSearchRequest, conn: Connection = Depends(g
         exclude_family_brand=reference["brand"] if reference else None,
         exclude_family_name=reference["perfume"] if reference else None,
     )
-    return results
+
+    if llm_enabled:
+        enhanced = await enhance_with_llm(req.query, results, req.limit)
+        if enhanced:
+            return enhanced
+    return results[: req.limit]
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(conn: Connection = Depends(get_db)):
