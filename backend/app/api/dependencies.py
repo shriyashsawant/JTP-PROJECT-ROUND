@@ -1,16 +1,22 @@
+import asyncio
+
 import asyncpg
+
 from app.core.config import settings
 
 pool = None
+_pool_lock = asyncio.Lock()
 
 async def get_db_pool():
     global pool
     if pool is None:
-        pool = await asyncpg.create_pool(
-            settings.database_url,
-            min_size=2,
-            max_size=10,
-        )
+        async with _pool_lock:
+            if pool is None:
+                pool = await asyncpg.create_pool(
+                    settings.database_url,
+                    min_size=2,
+                    max_size=10,
+                )
     return pool
 
 async def get_db():

@@ -1,8 +1,10 @@
 """
 AuraMatch AI - Scenario to Notes/Accords Mapping
 """
+import re
+from typing import Any
 
-SCENARIO_MAP = {
+SCENARIO_MAP: dict[str, dict[str, Any]] = {
     "gym": {
         "label": "Gym & Sports",
         "vibe": "dynamic and energizing",
@@ -288,6 +290,7 @@ NOTE_FAMILIES = {
         "neroli",
         "citruses",
         "lime",
+        "tangerine",
         "petitgrain"
     ],
     "floral": [
@@ -301,7 +304,20 @@ NOTE_FAMILIES = {
         "lily-of-the-valley",
         "floral notes",
         "lavender",
-        "heliotrope"
+        "heliotrope",
+        "geranium",
+        "freesia",
+        "peony",
+        "gardenia",
+        "magnolia",
+        "lily",
+        "orchid",
+        "carnation",
+        "osmanthus",
+        "mimosa",
+        "cyclamen",
+        "aldehydes",
+        "orris root"
     ],
     "woody": [
         "sandalwood",
@@ -310,7 +326,11 @@ NOTE_FAMILIES = {
         "woodsy notes",
         "oakmoss",
         "pine",
-        "cypress"
+        "cypress",
+        "vetiver",
+        "guaiac wood",
+        "cashmere wood",
+        "tobacco"
     ],
     "oriental": [
         "amber",
@@ -321,7 +341,10 @@ NOTE_FAMILIES = {
         "benzoin",
         "myrrh",
         "cinnamon",
-        "clove"
+        "clove",
+        "vanille",
+        "olibanum",
+        "tobacco"
     ],
     "fresh_aquatic": [
         "aquatic notes",
@@ -329,7 +352,8 @@ NOTE_FAMILIES = {
         "ozonic",
         "marine notes",
         "watery notes",
-        "calone"
+        "calone",
+        "lotus"
     ],
     "green": [
         "green notes",
@@ -340,7 +364,11 @@ NOTE_FAMILIES = {
         "mint",
         "basil",
         "thyme",
-        "rosemary"
+        "rosemary",
+        "sage",
+        "clary sage",
+        "artemisia",
+        "galbanum"
     ],
     "gourmand": [
         "vanilla",
@@ -350,7 +378,8 @@ NOTE_FAMILIES = {
         "honey",
         "almond",
         "coffee",
-        "sugar"
+        "sugar",
+        "vanille"
     ],
     "spicy": [
         "cinnamon",
@@ -361,7 +390,11 @@ NOTE_FAMILIES = {
         "ginger",
         "saffron",
         "spices",
-        "spicy notes"
+        "spicy notes",
+        "pink pepper",
+        "pepper",
+        "coriander",
+        "cloves"
     ],
     "animalic": [
         "musk",
@@ -373,12 +406,31 @@ NOTE_FAMILIES = {
     "earthy": [
         "patchouli",
         "agarwood (oud)",
+        "oud",
+        "agarwood",
         "moss",
         "mushroom",
         "rooty notes",
-        "earth"
+        "earth",
+        "orris root",
+        "galbanum"
     ],
-    "fruity": ["pineapple", "apple", "peach", "plum", "cherry", "pear", "melon", "blackcurrant", "berries", "red fruits"]
+    "fruity": [
+        "pineapple",
+        "apple",
+        "peach",
+        "plum",
+        "cherry",
+        "pear",
+        "melon",
+        "blackcurrant",
+        "berries",
+        "red fruits",
+        "black currant",
+        "raspberry",
+        "fruity notes",
+        "osmanthus"
+    ]
 }
 
 
@@ -424,14 +476,16 @@ LONGEVITY_PHRASES = [
 
 MALE_HINTS = [r"\bmale\b", r"\bman\b", r"\bmen\b", r"\bboy\b", r"\bguy\b", r"\bhim\b", r"\bhis\b", r"\bhusband\b", r"\bboyfriend\b"]
 FEMALE_HINTS = [r"\bfemale\b", r"\bwoman\b", r"\bwomen\b", r"\bgirl\b", r"\bher\b", r"\bhers\b", r"\bwife\b", r"\bgirlfriend\b"]
+UNISEX_HINTS = ["unisex", "gender neutral", "gender-neutral", "men and women", "women and men", "for everyone"]
 
 # Accord -> longevity/sillage weight (0-1). Heavier/denser accords linger and project more.
 LONGEVITY_ACCORD_WEIGHTS = {
     "woody": 0.9, "amber": 0.9, "balsamic": 0.9, "leather": 0.9, "musky": 0.85,
     "animalic": 0.9, "smoky": 0.85, "warm spicy": 0.8, "vanilla": 0.8, "oud": 0.95,
-    "patchouli": 0.85, "incense": 0.8, "earthy": 0.75,
+    "patchouli": 0.85, "incense": 0.8, "earthy": 0.75, "tobacco": 0.85,
     "floral": 0.55, "white floral": 0.55, "powdery": 0.5, "soft spicy": 0.55,
     "sweet": 0.6, "rose": 0.55, "aromatic": 0.5, "herbal": 0.5, "spicy": 0.6, "aldehydic": 0.5,
+    "fresh spicy": 0.65,
     "citrus": 0.25, "fresh": 0.25, "aquatic": 0.2, "green": 0.3, "ozonic": 0.2,
     "marine": 0.2, "fruity": 0.35, "tropical": 0.35,
 }
@@ -439,15 +493,45 @@ LONGEVITY_ACCORD_WEIGHTS = {
 SILLAGE_ACCORD_WEIGHTS = {
     "oud": 0.95, "leather": 0.9, "smoky": 0.9, "animalic": 0.9, "incense": 0.85,
     "amber": 0.8, "warm spicy": 0.8, "woody": 0.7, "musky": 0.75, "balsamic": 0.7,
-    "vanilla": 0.65, "patchouli": 0.75, "sweet": 0.6, "spicy": 0.65, "earthy": 0.6,
+    "vanilla": 0.65, "patchouli": 0.75, "sweet": 0.6, "spicy": 0.65, "earthy": 0.6, "tobacco": 0.85,
     "floral": 0.5, "white floral": 0.55, "rose": 0.5, "powdery": 0.4, "soft spicy": 0.5,
     "aromatic": 0.45, "herbal": 0.4, "aldehydic": 0.45,
+    "fresh spicy": 0.6,
     "citrus": 0.3, "fresh": 0.25, "aquatic": 0.2, "green": 0.3, "ozonic": 0.2,
     "marine": 0.2, "fruity": 0.35, "tropical": 0.4,
 }
 
 # "Power notes" - individual notes known for outsized longevity/projection regardless of accord family.
 POWER_NOTES = ["agarwood (oud)", "oud", "musk", "amber", "sandalwood", "patchouli", "vanilla", "tonka bean", "labdanum"]
+
+# Accord-level (not note-level) volatility tiers, derived from
+# LONGEVITY_ACCORD_WEIGHTS' already-vetted 0-1 scale rather than a second,
+# hand-typed accord vocabulary that could silently drift out of sync with
+# it (low weight = light/volatile = top note character, high weight =
+# dense/persistent = base note character). Used as a fallback wherever a
+# perfume's own accords need to answer the fresh-top/dense-base question
+# that notes alone can't - either because it has no notes at all, or
+# because its notes only cover one side of the pyramid (see
+# classify_accord_tiers below and decision_engine._bridge_fit).
+TOP_ACCORDS = {a for a, w in LONGEVITY_ACCORD_WEIGHTS.items() if w <= 0.35}
+BASE_ACCORDS = {a for a, w in LONGEVITY_ACCORD_WEIGHTS.items() if w >= 0.75}
+
+
+def classify_accord_tiers(accords: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Best-effort top/heart/base split of a perfume's main_accords via
+    TOP_ACCORDS/BASE_ACCORDS - used when a perfume has no notes at all, so
+    it isn't scored as pyramid-blank purely for lacking granular note data
+    (see db_repository._resolve_pyramid)."""
+    top, heart, base = [], [], []
+    for a in accords or []:
+        a_lower = a.lower().strip()
+        if a_lower in TOP_ACCORDS:
+            top.append(a)
+        elif a_lower in BASE_ACCORDS:
+            base.append(a)
+        else:
+            heart.append(a)
+    return top, heart, base
 
 # longevity_score (0-100 heuristic) -> human-readable estimated wear time, for display
 # and for enforcing explicit hour requirements ("8+ hours") rather than an abstract score.
@@ -473,9 +557,11 @@ PROJECTION_HINTS = {
     "strong": ["strong projection", "heavy sillage", "beast mode", "loud", "projects a lot", "room-filling"],
 }
 
-# Explicit hour requirements in free text ("8+ hours", "lasts 6-8 hours") - parsed via regex
-# in intent_detector.py, not a simple keyword list.
-LONGEVITY_HOUR_PATTERN = r"(\d{1,2})\s*\+?\s*(?:-\s*\d{1,2}\s*)?(?:hour|hr)s?"
+# Explicit hour requirements in free text ("8+ hours", "lasts 6-8 hours",
+# "lasts 6 to 8 hours", "8 or 10 hrs") - parsed via regex in intent_detector.py,
+# not a simple keyword list. Only the first (lower-bound) number is captured
+# as the minimum-hours threshold, same convention as the hyphenated range.
+LONGEVITY_HOUR_PATTERN = r"(\d{1,2})\s*\+?\s*(?:(?:-\s*|to\s+|or\s+)\d{1,2}\s*)?(?:hour|hr)s?"
 
 # Signals the user wants a cheaper/similar alternative to a named perfume (the
 # "dupe engine" intent), whether typed into the free-text search or the
@@ -500,6 +586,11 @@ BUDGET_TEXT_PATTERNS = [
     r"(?:under|within|below|less than)\s*(\d[\d,]*)\s*(?:rupees|rs\.?|inr)\b",
     r"budget\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|rupees)?\s*(\d[\d,]*)",
     r"(?:rs\.?|inr|₹)\s*(\d[\d,]*)\s*budget",
+    # Fallback: no currency marker at all ("perfume under 2000"). Restricted to
+    # 3-5 digit numbers (100-99999) specifically so it can't false-positive on
+    # the unrelated small numbers "under/less than" modifies elsewhere in this
+    # domain - hour counts ("under 8 hours") and ages are always 1-2 digits.
+    r"(?:under|below|less than)\s+([1-9]\d{2,4})\b",
 ]
 
 # Age -> accord-tier affinity, sourced from industry/consumer research (fragrance retailer
@@ -563,8 +654,48 @@ def get_scenario_keys(scenario: str):
 
 
 def get_note_family(note: str):
-    """Find which family a note belongs to."""
-    for family, notes in NOTE_FAMILIES.items():
-        if note.lower() in notes:
-            return family
+    """Find which family a note belongs to. Uses whole-word containment, not
+    an exact match - DB note names are often more specific than this generic
+    vocabulary (e.g. "Sicilian Lemon" or "Indonesian Patchouli Leaf" should
+    still resolve to "citrus"/"earthy" via their "lemon"/"patchouli" entries,
+    same reasoning as the `_notes_equivalent` fix in decision_engine.py)."""
+    if not note:
+        return None
+    note_lower = note.lower().strip()
+    if note_lower in NOTE_FAMILIES:
+        return note_lower
+    for family, terms in NOTE_FAMILIES.items():
+        for term in terms:
+            if term == note_lower or re.search(rf"\b{re.escape(term)}\b", note_lower):
+                return family
     return None
+
+
+# Volatility-based tier grouping, used to infer a top/heart/base pyramid
+# position for a note when the source data doesn't already provide real
+# Fragrantica Top/Middle/Base tags (see classify_note_tiers below) -
+# light/volatile families evaporate fast (top), heavy/dense families anchor
+# the base, everything else is the mid-volatility heart.
+TOP_TIER_FAMILIES = {"citrus", "fresh_aquatic", "green", "fruity"}
+BASE_TIER_FAMILIES = {"woody", "oriental", "animalic", "earthy"}
+
+
+def classify_note_tiers(notes: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Best-effort top/heart/base classification via note family - used both
+    as a seed-time gap-filler (seed_data.resolve_note_tiers, for notes with
+    no real Fragrantica tier tag) and as a request-time fallback
+    (db_repository._format_perfume_row, for rows seeded before the pyramid
+    columns existed and are still NULL). Volatile/light families (citrus,
+    aquatic, green, fruity) are treated as top notes, heavy/dense families
+    (woody, oriental, animalic, earthy) as base notes, everything else
+    (floral, spicy, gourmand) as heart. An approximation, not scraped data."""
+    top, heart, base = [], [], []
+    for n in notes or []:
+        family = get_note_family(n)
+        if family in TOP_TIER_FAMILIES:
+            top.append(n)
+        elif family in BASE_TIER_FAMILIES:
+            base.append(n)
+        else:
+            heart.append(n)
+    return top, heart, base

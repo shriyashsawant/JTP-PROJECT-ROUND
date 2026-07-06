@@ -12,7 +12,7 @@ export default function AboutPage() {
         <ArrowLeft size={14} /> Back
       </Link>
 
-      <h1 className="text-3xl font-bold tracking-tight">About AuraMatch AI</h1>
+      <h1 className="font-heading text-3xl font-semibold tracking-tight">About AuraMatch AI</h1>
 
       <div className="mt-6 space-y-4 text-sm leading-relaxed text-muted-foreground">
         <p>
@@ -26,8 +26,8 @@ export default function AboutPage() {
         <ul className="list-disc space-y-1 pl-5">
           <li><strong>Frontend:</strong> Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui, Framer Motion</li>
           <li><strong>Backend:</strong> FastAPI, asyncpg, SentenceTransformers (all-MiniLM-L6-v2)</li>
-          <li><strong>Database:</strong> PostgreSQL + pgvector (384-d embeddings, HNSW indexing)</li>
-          <li><strong>Infrastructure:</strong> Docker Compose (3 containers), Supabase (cloud)</li>
+          <li><strong>Database:</strong> PostgreSQL + pgvector (384-d embeddings, GIN-indexed accord/note arrays)</li>
+          <li><strong>Infrastructure:</strong> Docker Compose, 3 containers on a custom bridge network - no external cloud services required</li>
         </ul>
 
         <h2 className="text-base font-semibold text-foreground">Data Sources</h2>
@@ -36,21 +36,22 @@ export default function AboutPage() {
           <li>Fragrantica Perfume Dataset (70K perfumes)</li>
           <li>Fragrantica Cleaned Dataset (24K perfumes with structured notes)</li>
           <li>Perfume Recommendation Dataset (2.2K niche perfumes with images)</li>
+          <li>A hand-curated Indian mass-market brand supplement, plus a Fragrantica-enriched scrape of Amazon-listed Indian brands</li>
         </ul>
+        <p>Merged and deduplicated by normalized brand+name into ~40,600 unique perfumes.</p>
 
         <h2 className="text-base font-semibold text-foreground">How It Works</h2>
         <ol className="list-decimal space-y-1 pl-5">
-          <li>You describe your vibe or budget in plain English</li>
-          <li>The query is enriched with scenario-specific olfactory keywords</li>
-          <li>A 384-d embedding is generated via SentenceTransformers</li>
-          <li>pgvector performs cosine similarity search against 94K+ perfumes</li>
-          <li>The Decision Engine applies hybrid scoring (similarity × 0.8 + price × 0.2)</li>
-          <li>A deterministic explanation is generated — no LLM API calls needed</li>
+          <li>You describe your vibe, occasion, or budget in plain English (or pick filters)</li>
+          <li>The query is enriched with scenario-specific olfactory keywords and parsed for gender/budget/longevity/negation intent</li>
+          <li>A 384-d embedding is generated via SentenceTransformers and matched against the catalog with pgvector</li>
+          <li>A deterministic Decision Engine scores every candidate across occasion fit, note/accord overlap, gender lean, age bracket, longevity, projection, and price - each signal only counts when the query actually implies it</li>
+          <li>An explanation is generated for each result - by an optional LLM re-ranking layer when configured (grounded strictly in that perfume&apos;s real accords/notes/score, wrapped in a circuit breaker), or by the deterministic engine itself otherwise. Either way, results always fall back to the deterministic ranking untouched if anything upstream fails</li>
         </ol>
       </div>
 
       <div className="mt-10">
-        <Link href="https://github.com/anomalyco/opencode" target="_blank">
+        <Link href="https://github.com/shriyashsawant/JTP-PROJECT-ROUND" target="_blank">
           <Button variant="outline">View on GitHub</Button>
         </Link>
       </div>

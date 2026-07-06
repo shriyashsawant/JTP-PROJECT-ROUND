@@ -1,31 +1,38 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { motion } from "framer-motion";
-import { ArrowLeft, Search } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getPerfumeById } from "@/lib/api";
+import { getAccordGradient, openAmazonSearch } from "@/lib/utils";
 import type { PerfumeDetail } from "@/lib/api";
 
 function PerfumeHero({ perfume }: { perfume: PerfumeDetail }) {
   const [failed, setFailed] = useState(false);
+  const gradientClass = getAccordGradient(perfume.main_accords);
+
   if (!perfume.image_url || failed) {
     return (
-      <div className="flex h-64 w-full items-center justify-center rounded-xl bg-secondary sm:w-48">
-        <span className="text-4xl font-bold text-muted-foreground/30">
+      <div className={`relative flex h-64 w-full items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br ${gradientClass} border border-white/5 sm:w-48`}>
+        <div className="absolute inset-0 bg-black/15 backdrop-blur-[1px]" />
+        <span className="relative z-10 text-4xl font-bold uppercase tracking-wider text-white/50">
           {perfume.brand.charAt(0)}
           {perfume.perfume.charAt(0)}
         </span>
+        <div className="absolute bottom-3 right-3 text-[10px] uppercase tracking-widest text-white/30 font-medium">
+          {perfume.main_accords?.[0] || "scent"}
+        </div>
       </div>
     );
   }
   return (
-    <div className="relative h-64 w-full overflow-hidden rounded-xl bg-secondary sm:w-48">
+    <div className="relative h-64 w-full overflow-hidden rounded-xl bg-secondary border border-white/5 sm:w-48">
       <Image
         src={perfume.image_url}
         alt={`${perfume.brand} ${perfume.perfume}`}
@@ -39,6 +46,7 @@ function PerfumeHero({ perfume }: { perfume: PerfumeDetail }) {
 }
 
 export default function PerfumeDetailPage() {
+  const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const [perfume, setPerfume] = useState<PerfumeDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,6 +55,7 @@ export default function PerfumeDetailPage() {
   const perfumeId = parseInt(id, 10);
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (!id || isNaN(perfumeId)) {
       setLoading(false);
       setError("Invalid perfume ID");
@@ -58,7 +67,8 @@ export default function PerfumeDetailPage() {
       .then(setPerfume)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [id]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [id, perfumeId]);
 
   if (loading) {
     return (
@@ -81,7 +91,7 @@ export default function PerfumeDetailPage() {
   if (error || !perfume) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-24 text-center">
-        <h2 className="text-2xl font-bold">Perfume not found</h2>
+        <h2 className="font-heading text-2xl font-semibold">Perfume not found</h2>
         <p className="mt-2 text-muted-foreground">
           {error || "This perfume doesn't exist in our collection."}
         </p>
@@ -102,12 +112,13 @@ export default function PerfumeDetailPage() {
       animate={{ opacity: 1 }}
       className="mx-auto max-w-3xl px-6 py-12"
     >
-      <Link
-        href="/search"
-        className="mb-6 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      <button
+        type="button"
+        onClick={() => router.back()}
+        className="mb-6 inline-flex items-center gap-1 border-0 bg-transparent p-0 text-sm text-muted-foreground hover:text-foreground cursor-pointer"
       >
         <ArrowLeft size={14} /> Back to results
-      </Link>
+      </button>
 
       <div className="flex flex-col gap-8 sm:flex-row">
         <PerfumeHero perfume={perfume} />
@@ -117,19 +128,24 @@ export default function PerfumeDetailPage() {
             <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
               {perfume.brand}
             </p>
-            <h1 className="text-2xl font-bold">{perfume.perfume}</h1>
+            <h1 className="font-heading text-2xl font-semibold">{perfume.perfume}</h1>
           </div>
 
           {perfume.price_inr != null && (
-            <p className="text-2xl font-bold">
+            <p className="text-2xl font-bold text-primary">
               ₹{perfume.price_inr.toLocaleString("en-IN")}
             </p>
           )}
 
           <div className="flex flex-wrap gap-2">
             {perfume.type && (
-              <span className="rounded-full border px-3 py-1 text-xs font-medium">
+              <span className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
                 {perfume.type}
+              </span>
+            )}
+            {perfume.country && (
+              <span className="rounded-full border px-3 py-1 text-xs font-medium">
+                {perfume.country}
               </span>
             )}
             {perfume.launch_year && perfume.launch_year !== "Unknown" && (
@@ -137,6 +153,22 @@ export default function PerfumeDetailPage() {
                 {perfume.launch_year}
               </span>
             )}
+          </div>
+
+          <div className="pt-2 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => openAmazonSearch(perfume.brand, perfume.perfume)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity cursor-pointer shadow-md shadow-primary/10"
+            >
+              Shop Now ↗
+            </button>
+            <Link
+              href={`/search?prefill=${encodeURIComponent("cheaper alternative to " + perfume.brand + " " + perfume.perfume)}`}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-5 py-2 text-xs font-semibold text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+            >
+              Find Dupes
+            </Link>
           </div>
         </div>
       </div>
@@ -160,8 +192,71 @@ export default function PerfumeDetailPage() {
         </div>
       )}
 
-      {/* Notes */}
-      {perfume.notes.length > 0 && (
+      {/* Scent Pyramid: Top / Heart / Base, in increasing visual weight to
+          mirror increasing density/persistence down the pyramid */}
+      {perfume.top_notes.length > 0 || perfume.heart_notes.length > 0 || perfume.base_notes.length > 0 ? (
+        <div className="mt-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Scent Pyramid
+          </h2>
+          <div className="mt-3 space-y-4">
+            {perfume.top_notes.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary/40" />
+                  Top Notes
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {perfume.top_notes.map((n) => (
+                    <span
+                      key={n}
+                      className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-medium text-foreground"
+                    >
+                      {n}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {perfume.heart_notes.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
+                  Heart Notes
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {perfume.heart_notes.map((n) => (
+                    <span
+                      key={n}
+                      className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground"
+                    >
+                      {n}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {perfume.base_notes.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                  Base Notes
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {perfume.base_notes.map((n) => (
+                    <span
+                      key={n}
+                      className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-foreground"
+                    >
+                      {n}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : perfume.notes.length > 0 ? (
         <div className="mt-6">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Notes
@@ -176,6 +271,30 @@ export default function PerfumeDetailPage() {
               </span>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {/* Perfumer */}
+      {perfume.perfumer && (
+        <div className="mt-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Perfumer
+          </h2>
+          <p className="mt-1 text-sm">{perfume.perfumer}</p>
+        </div>
+      )}
+
+      {/* Fragrantica Link */}
+      {perfume.url && (
+        <div className="mt-4">
+          <a
+            href={perfume.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            View on Fragrantica ↗
+          </a>
         </div>
       )}
 
@@ -209,15 +328,6 @@ export default function PerfumeDetailPage() {
             className="h-2"
           />
         </div>
-      </div>
-
-      {/* Actions */}
-      <div className="mt-10">
-        <Link href={`/dupe`}>
-          <Button variant="outline" className="gap-2">
-            <Search size={16} /> Find Dupes for this
-          </Button>
-        </Link>
       </div>
     </motion.div>
   );

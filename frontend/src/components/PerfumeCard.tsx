@@ -7,6 +7,7 @@ import Image from "next/image";
 import { Star, Check, Minus, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { getAccordGradient, openAmazonSearch } from "@/lib/utils";
 import type { Perfume } from "@/lib/api";
 
 function StatusIcon({ status }: { status: "met" | "partial" | "unmet" }) {
@@ -15,26 +16,43 @@ function StatusIcon({ status }: { status: "met" | "partial" | "unmet" }) {
   return <X size={12} className="text-red-400" />;
 }
 
-function PerfumeThumbnail({ perfume }: { perfume: Perfume }) {
+function BestMatchBadge() {
+  return (
+    <span className="absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground shadow-sm">
+      <Star size={9} className="fill-current" />
+      Best Match
+    </span>
+  );
+}
+
+function PerfumeThumbnail({ perfume, showBadge }: { perfume: Perfume; showBadge: boolean }) {
   const [failed, setFailed] = useState(false);
+  const gradientClass = getAccordGradient(perfume.main_accords);
+
   if (!perfume.image_url || failed) {
     return (
-      <div className="flex h-32 w-full items-center justify-center rounded-lg bg-secondary">
-        <span className="text-2xl font-bold text-muted-foreground/30">
+      <div className={`relative flex h-32 w-full items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br ${gradientClass} border border-white/5`}>
+        {showBadge && <BestMatchBadge />}
+        <div className="absolute inset-0 bg-black/15 backdrop-blur-[1px]" />
+        <span className="relative z-10 text-2xl font-bold uppercase tracking-wider text-white/50 transition-transform duration-300 group-hover:scale-110">
           {perfume.brand.charAt(0)}
           {perfume.perfume.charAt(0)}
         </span>
+        <div className="absolute bottom-2 right-2 text-[9px] uppercase tracking-widest text-white/30 font-medium">
+          {perfume.main_accords?.[0] || "scent"}
+        </div>
       </div>
     );
   }
   return (
-    <div className="relative h-32 w-full overflow-hidden rounded-lg bg-secondary">
+    <div className="relative h-32 w-full overflow-hidden rounded-lg bg-secondary border border-white/5">
+      {showBadge && <BestMatchBadge />}
       <Image
         src={perfume.image_url}
         alt={`${perfume.brand} ${perfume.perfume}`}
         fill
         sizes="(max-width: 640px) 100vw, 33vw"
-        className="object-cover"
+        className="object-cover transition-transform duration-300 group-hover:scale-105"
         onError={() => setFailed(true)}
       />
     </div>
@@ -49,29 +67,36 @@ export default function PerfumeCard({
   index?: number;
 }) {
   const stars = perfume.match_score != null ? Math.round(perfume.match_score / 20) : 0;
+  const isBestMatch = index === 0 && perfume.match_score != null;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: index * 0.08 }}
+      transition={{ duration: 0.45, delay: index * 0.08, ease: [0.22, 1, 0.36, 1] }}
     >
       <Link href={`/perfume/${perfume.id}`}>
-        <Card className="group h-full transition-all hover:-translate-y-1 hover:shadow-lg">
+        <Card
+          className={`group relative h-full transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 ${
+            isBestMatch
+              ? "border-primary/50 shadow-md shadow-primary/10 ring-1 ring-primary/20 hover:border-primary/70"
+              : "hover:border-primary/40"
+          }`}
+        >
           <CardContent className="flex flex-col gap-3 p-5">
-            <PerfumeThumbnail perfume={perfume} />
+            <PerfumeThumbnail perfume={perfume} showBadge={isBestMatch} />
 
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   {perfume.brand}
                 </p>
-                <h3 className="truncate text-base font-semibold leading-tight">
+                <h3 className="font-heading truncate text-base font-semibold leading-tight transition-colors group-hover:text-primary">
                   {perfume.perfume}
                 </h3>
               </div>
               {perfume.type && (
-                <span className="shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <span className="shrink-0 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
                   {perfume.type}
                 </span>
               )}
@@ -140,11 +165,26 @@ export default function PerfumeCard({
               </ul>
             )}
 
-            {perfume.savings != null && perfume.savings > 0 && (
-              <p className="text-xs font-medium text-emerald-600">
-                Save ₹{perfume.savings.toLocaleString("en-IN")}
-              </p>
-            )}
+            <div className="mt-2 flex items-center justify-between gap-2 border-t pt-3">
+              {perfume.savings != null && perfume.savings > 0 ? (
+                <span className="inline-flex items-center rounded-full bg-emerald-600/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                  Save ₹{perfume.savings.toLocaleString("en-IN")}
+                </span>
+              ) : (
+                <div />
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openAmazonSearch(perfume.brand, perfume.perfume);
+                }}
+                className="inline-flex items-center gap-1 rounded bg-secondary px-3 py-1.5 text-[11px] font-semibold text-secondary-foreground hover:bg-primary hover:text-primary-foreground transition-colors cursor-pointer"
+              >
+                Shop Now ↗
+              </button>
+            </div>
           </CardContent>
         </Card>
       </Link>

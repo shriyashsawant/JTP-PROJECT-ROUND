@@ -5,12 +5,21 @@ Modular: swap `scorer` and `explainer` with an LLM later (just implement the sam
 """
 import random
 import re
-from typing import Optional
-from app.services.scenario_map import (
-    SCENARIO_MAP, AGE_BRACKET_ACCORDS, age_to_bracket,
-    estimate_wear_hours, estimate_hours_numeric, sillage_label,
-)
 
+from app.services.scenario_map import (
+    AGE_BRACKET_ACCORDS,
+    BASE_ACCORDS,
+    BASE_TIER_FAMILIES,
+    NOTE_FAMILIES,
+    SCENARIO_MAP,
+    TOP_ACCORDS,
+    TOP_TIER_FAMILIES,
+    age_to_bracket,
+    estimate_hours_numeric,
+    estimate_wear_hours,
+    get_note_family,
+    sillage_label,
+)
 
 # ---------------------------------------------------------------------------
 # 1. Hybrid Scorer
@@ -24,23 +33,36 @@ NOTE_MATCH_WEIGHT = 0.20
 SCENARIO_WEIGHT = 0.28
 LONGEVITY_WEIGHT = 0.20
 PROJECTION_WEIGHT = 0.10
+NOTE_FAMILY_WEIGHT = 0.15
+BRIDGE_WEIGHT = 0.15
 PRICE_WEIGHT = 0.05
 GENDER_WEIGHT = 0.05
 AGE_WEIGHT = 0.05
 
+# Scenarios/note families that signal the user wants a fresh, volatile-top
+# profile - used only to detect the fresh-vs-longevity contradiction (see
+# _bridge_fit), not as a general "fresh" scoring signal elsewhere.
+FRESH_SCENARIOS = {"gym", "summer"}
+FRESH_NOTE_FAMILIES = {"citrus", "fresh_aquatic", "green"}
 
-def _price_fit(price_inr: Optional[float], budget: Optional[float]) -> float:
-    """1.0 when price <= budget/2, linear decay to 0 at budget. 1.0 (no-op) if no budget set."""
+
+def _price_fit(price_inr: float | None, budget: float | None, deal_breaker: bool = False) -> float:
+    """1.0 (no-op) if no budget set. Otherwise rewards how well the price uses the
+    budget the user gave us: by default, closer to the budget ceiling scores higher
+    (they told us what they're willing to spend - a recommendation that uses more
+    of it is usually a better perfume, not a compromise). In `deal_breaker` mode
+    this flips: cheaper scores higher, since price is the user's overriding
+    concern rather than one factor among several."""
     if budget is None or budget <= 0 or price_inr is None:
         return 1.0
-    if price_inr <= budget / 2:
-        return 1.0
-    if price_inr >= budget:
+    if price_inr > budget:
         return 0.0
-    return 1.0 - (price_inr - budget / 2) / (budget / 2)
+    if deal_breaker:
+        return 1.0 - (price_inr / budget)
+    return price_inr / budget
 
 
-def _gender_fit(perfume_gender: Optional[str], requested_gender: Optional[str]) -> float:
+def _gender_fit(perfume_gender: str | None, requested_gender: str | None) -> float:
     """1.0 (no-op) unless the user asked for a gender AND the perfume is explicitly
     tagged as the other gender - then a soft penalty (never zero, never excludes)."""
     if not requested_gender:
@@ -52,25 +74,148 @@ def _gender_fit(perfume_gender: Optional[str], requested_gender: Optional[str]) 
     return 0.4
 
 
-def _scenario_fit(perfume_accords: list[str], matched_scenarios: list[str]) -> float:
-    """1.0 (no-op) if no occasion/season was signalled. Otherwise, the fraction of
-    this perfume's accords that overlap with the union of matched scenarios'
-    accord vocab (2+ overlapping accords = full credit)."""
+def _gender_leaning_modifier(
+    perfume_gender: str | None,
+    requested_gender: str | None,
+    notes: list[str],
+    accords: list[str],
+) -> float:
+    """Evaluates if a unisex perfume leans masculine or feminine based on its notes
+    and accords, returning a slight penalty (0.85) if it leans opposite to the
+    user's requested gender. This prevents suggesting overly sweet, floral unisex
+    scents to someone asking for masculine scents, and vice-versa, matching the
+    leaning slider behavior of premium fragrance databases.
+
+    Note matching uses `_notes_equivalent` (whole-word containment), not a raw
+    substring check - a substring check would match masc/fem keywords inside
+    unrelated compound note names (e.g. "rose" is a raw substring of both
+    "Rosemary", an aromatic herb with no real feminine association, and
+    "Tuberose", a genuinely feminine white floral - the former is a false
+    positive, the latter only "worked" by accident). "tuberose" is listed
+    explicitly below instead, so it counts on purpose rather than by luck."""
+    if not requested_gender or not perfume_gender:
+        return 1.0
+    if perfume_gender != "unisex":
+        return 1.0
+
+    notes_set = {n.lower() for n in notes}
+    accords_set = {a.lower() for a in accords}
+
+    masc_accords = {"woody", "leather", "tobacco", "spicy", "earthy", "smoky", "animalic"}
+    masc_notes = {"cedar", "vetiver", "leather", "tobacco", "pepper", "oakmoss", "patchouli", "sandalwood", "guaiac wood", "birch"}
+
+    fem_accords = {"floral", "fruity", "sweet", "vanilla", "gourmand"}
+    fem_notes = {"rose", "jasmine", "vanilla", "vanille", "peony", "gardenia", "magnolia", "peach", "coconut", "caramel", "sugar", "tuberose"}
+
+    masc_count = len(accords_set & masc_accords) + sum(1 for n in notes_set if any(_notes_equivalent(mn, n) for mn in masc_notes))
+    fem_count = len(accords_set & fem_accords) + sum(1 for n in notes_set if any(_notes_equivalent(fn, n) for fn in fem_notes))
+
+    if requested_gender == "male" and fem_count > masc_count + 1:
+        return 0.85  # leans feminine
+    if requested_gender == "female" and masc_count > fem_count + 1:
+        return 0.85  # leans masculine
+
+    return 1.0
+
+
+# Concentration -> (longevity_multiplier, sillage_multiplier). Ordered by
+# actual oil concentration strength (Extrait/Parfum 20-40% down to Body
+# Spray ~1-3%) so Eau de Parfum gets its own, more moderate adjustment
+# instead of being conflated with the meaningfully stronger Extrait/pure-
+# Parfum tier. Keyed on `_parse_concentration_type`'s exact (lowercased)
+# output - see `_adjust_performance_by_type` for why this is an exact-match
+# table rather than substring matching.
+TYPE_PERFORMANCE_ADJUSTMENTS: dict[str, tuple[float, float]] = {
+    "extrait de parfum": (1.15, 0.85),
+    "elixir": (1.15, 0.85),
+    "parfum": (1.15, 0.85),
+    "eau de parfum": (1.08, 0.93),
+    "eau de toilette": (0.90, 1.10),
+    "eau de cologne": (0.75, 1.15),
+    "body spray": (0.50, 0.70),
+}
+
+
+def _adjust_performance_by_type(
+    longevity_score: float | None,
+    sillage_score: float | None,
+    perfume_type: str | None,
+) -> tuple[float | None, float | None]:
+    """Dynamically adjusts database longevity and sillage scores based on the
+    perfume's concentration type, aligning the deterministic scorer with
+    physical fragrance chemistry: higher-concentration formulations
+    (Extrait/Parfum, 20-40% oil) last longer but project less (sit closer to
+    the skin); lighter ones (Cologne, 2-4%) fade faster but burst brighter on
+    application.
+
+    Exact-match lookup, not substring matching: `perfume_type` only ever
+    comes from `_parse_concentration_type` (db_repository.py), which returns
+    exactly one of TYPE_PERFORMANCE_ADJUSTMENTS' 7 keys or None - there is no
+    other producer of this field (the raw DB `type` column is always NULL
+    from seeding). A substring check here previously conflated tiers that
+    are meaningfully different in strength: "Eau de Parfum" (15-20%
+    concentration) was matched by a bare `"parfum" in t` check and got the
+    exact same +15%/-15% adjustment as Extrait/pure Parfum (20-40%
+    concentration) - a real formulation-strength difference the scorer
+    should reflect, not just a typo of `==` vs `in`. Each tier now has its
+    own distinct, concentration-appropriate multiplier instead."""
+    if not perfume_type or longevity_score is None or sillage_score is None:
+        return longevity_score, sillage_score
+
+    adjustment = TYPE_PERFORMANCE_ADJUSTMENTS.get(perfume_type.lower())
+    if not adjustment:
+        return longevity_score, sillage_score
+
+    longevity_mult, sillage_mult = adjustment
+    l_adj = longevity_score * longevity_mult
+    s_adj = sillage_score * sillage_mult
+    l_adj = min(100.0, l_adj) if longevity_mult > 1 else max(0.0, l_adj)
+    s_adj = min(100.0, s_adj) if sillage_mult > 1 else max(0.0, s_adj)
+    return round(l_adj, 1), round(s_adj, 1)
+
+
+def _fuzzy_overlap_count(items: set[str], targets: set[str]) -> int:
+    """Count how many `items` have at least one whole-word-equivalent match in
+    `targets` (via `_notes_equivalent`, defined below) rather than requiring
+    an exact string match. Matters here because DB note names are often more
+    specific than SCENARIO_MAP's generic vocabulary (e.g. a perfume tagged
+    "Sicilian Lemon" or "Indonesian Patchouli Leaf" would never exactly-match
+    a scenario's plain "lemon"/"patchouli" note entry, so raw set
+    intersection silently loses credit for perfumes that are a real match)."""
+    count = 0
+    for item in items:
+        if any(_notes_equivalent(item, target) for target in targets):
+            count += 1
+    return count
+
+
+def _scenario_fit(perfume_accords: list[str], perfume_notes: list[str], matched_scenarios: list[str]) -> float:
+    """1.0 (no-op) if no occasion/season was signalled. Otherwise, a 70/30 blend
+    of accord overlap and note overlap against the union of matched scenarios'
+    vocab (2+ overlapping accords, or 3+ overlapping notes, = full credit on
+    that axis). SCENARIO_MAP defines both an accord vocab AND a notes vocab
+    per scenario, but only accords were ever read here - the notes were
+    already being generated into the embedding text and displayed to the
+    user, but silently ignored by this deterministic scorer."""
     if not matched_scenarios:
         return 1.0
-    target = set()
+    target_accords: set[str] = set()
+    target_notes: set[str] = set()
     for s in matched_scenarios:
         if s in SCENARIO_MAP:
-            target.update(a.lower() for a in SCENARIO_MAP[s]["accords"])
-    if not target:
+            target_accords.update(a.lower() for a in SCENARIO_MAP[s]["accords"])
+            target_notes.update(n.lower() for n in SCENARIO_MAP[s].get("notes", []))
+    if not target_accords and not target_notes:
         return 1.0
-    perfume_set = {a.lower() for a in (perfume_accords or [])}
-    overlap = perfume_set & target
-    return min(1.0, len(overlap) / 2.0)
+    accord_set = {a.lower() for a in (perfume_accords or [])}
+    note_set = {n.lower() for n in (perfume_notes or [])}
+    accord_score = min(1.0, len(accord_set & target_accords) / 2.0) if target_accords else 1.0
+    note_score = min(1.0, _fuzzy_overlap_count(note_set, target_notes) / 3.0) if target_notes else 1.0
+    return accord_score * 0.7 + note_score * 0.3
 
 
 def _longevity_fit(
-    longevity_score: Optional[float], longevity_requested: bool, hours_required: Optional[int],
+    longevity_score: float | None, longevity_requested: bool, hours_required: int | None,
 ) -> float:
     """1.0 (no-op) unless longevity was signalled. A soft 'long lasting' phrase scales
     with longevity_score; an explicit 'N+ hours' requirement is enforced as a real
@@ -87,7 +232,7 @@ def _longevity_fit(
     return max(0.0, min(1.0, longevity_score / 100.0))
 
 
-def _projection_fit(sillage_score: Optional[float], projection_preference: Optional[str]) -> float:
+def _projection_fit(sillage_score: float | None, projection_preference: str | None) -> float:
     """1.0 (no-op) unless the user specified a projection preference (light/moderate/strong)."""
     if not projection_preference:
         return 1.0
@@ -122,7 +267,7 @@ IDENTITY_BONUS_NAME = 15.0     # perfume name alone
 IDENTITY_BONUS_BRAND = 8.0     # brand alone (least specific - many products share it)
 
 
-def _identity_boost(raw_query: str, brand: str, perfume_name: str) -> tuple[float, Optional[str]]:
+def _identity_boost(raw_query: str, brand: str, perfume_name: str) -> tuple[float, str | None]:
     """Deterministic lexical boost: if the user's raw query literally names this
     exact perfume or brand, spike its score - bypassing embedding fuzziness
     entirely for the 'I want THIS specific perfume' case. Zero latency, zero new
@@ -166,21 +311,157 @@ def _jaccard(a: list[str], b: list[str]) -> float:
     return len(a_set & b_set) / len(a_set | b_set)
 
 
+def _notes_equivalent(a: str, b: str) -> bool:
+    """Two note/accord labels count as the "same" if identical, or one is the
+    other plus extra descriptive words (e.g. "Jasmine" / "Moroccan Jasmine",
+    "Woody" / "Woody Notes") - a whole-word containment check, not a raw
+    substring check, so "Musk" doesn't false-match "Musky" (a different
+    standard Fragrantica accord category) or "Rose" match inside "Roseview".
+    Deliberately NOT fuzzy/edit-distance matching: containment has no false-
+    positive risk, whereas tolerating misspellings could conflate genuinely
+    different short note names."""
+    if a == b:
+        return True
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return re.search(rf"\b{re.escape(shorter)}\b", longer) is not None
+
+
+def _fuzzy_jaccard(a: list[str] | None, b: list[str] | None) -> float:
+    """Like `_jaccard`, but treats descriptive variants of the same note/accord
+    as equivalent (via `_notes_equivalent`) instead of requiring an exact
+    string match. This matters for reference-composition scoring: crowd-
+    tagged accord/note vocabularies are inconsistent across data sources, so
+    two perfumes the fragrance community considers near-identical can still
+    have near-zero *exact*-string overlap in our data purely from tagging
+    differences (one tagged "Jasmine", the other "Moroccan Jasmine").
+    Reduces to standard Jaccard when only exact matches exist. Uses greedy
+    (not maximum) bipartite matching - fine at this list size (a handful of
+    notes/accords per perfume) and keeps the logic simple and deterministic."""
+    a_norm = [x.lower().strip() for x in (a or []) if x and x.strip()]
+    b_norm = [y.lower().strip() for y in (b or []) if y and y.strip()]
+    if not a_norm or not b_norm:
+        return 0.0
+    used_b = [False] * len(b_norm)
+    matches = 0
+    for x in a_norm:
+        for i, y in enumerate(b_norm):
+            if not used_b[i] and _notes_equivalent(x, y):
+                used_b[i] = True
+                matches += 1
+                break
+    union = len(a_norm) + len(b_norm) - matches
+    return matches / union if union else 0.0
+
+
 def _reference_fit(
     candidate_accords: list[str], candidate_notes: list[str],
-    reference_accords: list[str], reference_notes: list[str],
+    reference_accords: list[str] | None, reference_notes: list[str] | None,
 ) -> float:
     """Real, quantitative composition similarity to a named reference perfume
     (the 'dupe engine' case) - accords weighted higher than notes since they
     summarize the perfume's overall character, notes are granular ingredients.
     This replaces guessing via raw-text embedding similarity with an actual
     calculated overlap between the two perfumes' real compositions."""
-    accord_sim = _jaccard(candidate_accords, reference_accords)
-    note_sim = _jaccard(candidate_notes, reference_notes)
+    accord_sim = _fuzzy_jaccard(candidate_accords, reference_accords)
+    note_sim = _fuzzy_jaccard(candidate_notes, reference_notes)
     return accord_sim * 0.65 + note_sim * 0.35
 
 
-def _age_fit(perfume_accords: list[str], age: Optional[int]) -> float:
+def _note_family_fit(
+    perfume_notes: list[str], perfume_accords: list[str], note_families: list[str] | None,
+) -> float:
+    """1.0 (no-op) unless the user picked "Scent Preference" note families in
+    the search form. Otherwise, the fraction of the requested families that
+    this perfume has at least one matching note/accord for (whole-word-
+    equivalent match, not exact string - same reasoning as `_scenario_fit`'s
+    note overlap). Previously `note_families` was only ever used to expand
+    the embedding query text (see ml_engine.build_context_query) and then
+    silently dropped by this deterministic scorer - a result could rank highly
+    on text similarity alone while containing zero notes from a family the
+    user explicitly asked for."""
+    if not note_families:
+        return 1.0
+    valid_families = [f for f in note_families if f in NOTE_FAMILIES]
+    if not valid_families:
+        return 1.0
+    haystack = [n.lower() for n in (perfume_notes or [])] + [a.lower() for a in (perfume_accords or [])]
+    matched = 0
+    for family in valid_families:
+        family_terms = [t.lower() for t in NOTE_FAMILIES[family]]
+        if any(_notes_equivalent(term, h) for term in family_terms for h in haystack):
+            matched += 1
+    return matched / len(valid_families)
+
+
+def _bridge_fit(
+    top_notes: list[str], base_notes: list[str], perfume_accords: list[str],
+    wants_fresh: bool, wants_longevity: bool,
+) -> float:
+    """1.0 (no-op) unless the user wants BOTH a fresh/energetic profile (gym/
+    summer scenario, or a citrus/fresh_aquatic/green note-family preference)
+    AND explicit long-lasting performance - a real chemical contradiction:
+    volatile fresh molecules (citrus, aquatic) evaporate fast, so a query
+    like "fresh gym scent that lasts 12 hours" can't be satisfied by a
+    single-tier match. Rewards perfumes built as a "bridge": a genuinely
+    fresh TOP paired with a dense, long-lasting BASE (ambroxan/musk/woody/
+    vetiver) - rather than silently recommending a heavy oud (satisfies
+    longevity, fails the fresh ask) or a pure citrus (satisfies fresh, fades
+    in under an hour). `top_notes`/`base_notes` are the pyramid tier arrays
+    populated at seed time (see seed_data.resolve_note_tiers) - real
+    Fragrantica tags where available, otherwise inferred from note family.
+
+    Falls back to `perfume_accords` for whichever side notes couldn't answer:
+    21% of the catalog (8,721 rows) has no notes at all, but 96% of those
+    still have main_accords - without this fallback, a perfume would score
+    the worst possible bridge fit (0.2) purely because notes data happens to
+    be missing, not because it's actually a poor fresh-top/dense-base match.
+    Accords are a coarser signal than notes (a summary tag, not a specific
+    ingredient), so they only fill a gap - they never override a real
+    notes-derived answer on the side that already has one."""
+    if not (wants_fresh and wants_longevity):
+        return 1.0
+    has_fresh_top = any(get_note_family(n) in TOP_TIER_FAMILIES for n in (top_notes or []))
+    has_dense_base = any(get_note_family(n) in BASE_TIER_FAMILIES for n in (base_notes or []))
+    if not has_fresh_top or not has_dense_base:
+        # main_accords are already family-level labels ("citrus", "woody"),
+        # not member notes - get_note_family expects the latter (it looks up
+        # whether a note NAME belongs to a family, not whether a string IS a
+        # family), so accords need their own direct membership check here
+        # via TOP_ACCORDS/BASE_ACCORDS instead.
+        accords_lower = {a.lower() for a in (perfume_accords or [])}
+        if not has_fresh_top:
+            has_fresh_top = bool(accords_lower & TOP_ACCORDS)
+        if not has_dense_base:
+            has_dense_base = bool(accords_lower & BASE_ACCORDS)
+    if has_fresh_top and has_dense_base:
+        return 1.0
+    if has_fresh_top or has_dense_base:
+        return 0.5
+    return 0.2
+
+
+def _negation_penalty(
+    perfume_accords: list[str], perfume_notes: list[str], negated_terms: list[str] | None,
+) -> tuple[float, str | None]:
+    """1.0 (no-op) unless the user named notes/accords they explicitly don't
+    want (e.g. "no vanilla", "not sweet"). Heavily scales down - rather than
+    zeroing out - a candidate whose own accords/notes contain a negated term:
+    a perfume can list a trace note without being dominated by it, so this is
+    a strong deprioritization, not a hard exclusion. Reuses `_notes_equivalent`
+    (whole-word containment) so "no vanilla" also catches a candidate tagged
+    "Vanilla Bean", not just an exact string match. Returns the matched term
+    too, so the caller can surface which negated note actually hit."""
+    if not negated_terms:
+        return 1.0, None
+    haystack = [a.lower() for a in (perfume_accords or [])] + [n.lower() for n in (perfume_notes or [])]
+    for term in negated_terms:
+        for h in haystack:
+            if _notes_equivalent(term, h) or _notes_equivalent(h, term):
+                return 0.25, term
+    return 1.0, None
+
+
+def _age_fit(perfume_accords: list[str], age: int | None) -> float:
     """1.0 (no-op) unless age was provided. A small, floored (0.6+) nudge toward
     accords that skew toward that age bracket per industry consumer research -
     a population-level trend, not a rule, so it can never dominate the score."""
@@ -198,34 +479,71 @@ def _age_fit(perfume_accords: list[str], age: Optional[int]) -> float:
 
 def hybrid_score(
     cosine_similarity: float,
-    price_inr: Optional[float],
-    budget: Optional[float] = None,
+    price_fit: float = 1.0,
     note_match: float = 0.0,
     gender_fit: float = 1.0,
     longevity_fit: float = 1.0,
     scenario_fit: float = 1.0,
     projection_fit: float = 1.0,
     age_fit: float = 1.0,
+    note_family_fit: float = 1.0,
+    bridge_fit: float = 1.0,
+    has_budget: bool = False,
+    has_gender: bool = False,
+    has_longevity: bool = False,
+    has_scenario: bool = False,
+    has_projection: bool = False,
+    has_age: bool = False,
+    has_note_family: bool = False,
+    has_bridge: bool = False,
 ) -> float:
     """
-    Final Score = sim*0.07 + note_match*0.20 + scenario_fit*0.28 + longevity_fit*0.20
-                + projection_fit*0.10 + price_fit*0.05 + gender_fit*0.05 + age_fit*0.05
+    Final Score = (sim*0.07 + note_match*0.20 + [scenario_fit*0.28] + [longevity_fit*0.20]
+                + [projection_fit*0.10] + [note_family_fit*0.15] + [bridge_fit*0.15]
+                + [price_fit*0.05] + [gender_fit*0.05] + [age_fit*0.05])
+                / (0.27 + sum of included bracketed weights)
 
-    Every *_fit term defaults to a neutral 1.0 when the user didn't signal that
-    preference, so a query with no occasion/longevity/projection/gender/age intent
-    is scored almost entirely on scent-profile match (note_match + similarity).
+    Only the baseline scent-profile signal (similarity + note match) is always
+    weighted; every other *_fit term - and its slice of the denominator - only
+    counts when the user actually signalled that preference (has_budget,
+    has_gender, etc). Previously every unsignalled term still contributed its
+    neutral 1.0 default to a FIXED denominator of 1.0, so a query with zero
+    occasion/longevity/projection/gender/age/budget intent still scored a
+    flat 73% (the combined weight of those six neutral terms) before a single
+    real note/similarity point was added - compressing every result into a
+    narrow 73%-100% band regardless of actual match quality. Rescaling the
+    denominator to only the active terms restores full 0%-100% contrast.
     """
-    price_score = _price_fit(price_inr, budget)
-    total = (
-        cosine_similarity * SIM_WEIGHT
-        + note_match * NOTE_MATCH_WEIGHT
-        + scenario_fit * SCENARIO_WEIGHT
-        + longevity_fit * LONGEVITY_WEIGHT
-        + projection_fit * PROJECTION_WEIGHT
-        + price_score * PRICE_WEIGHT
-        + gender_fit * GENDER_WEIGHT
-        + age_fit * AGE_WEIGHT
-    )
+    weights = {"sim": SIM_WEIGHT, "note": NOTE_MATCH_WEIGHT}
+    weighted_sum = cosine_similarity * weights["sim"] + note_match * weights["note"]
+
+    if has_budget:
+        weights["price"] = PRICE_WEIGHT
+        weighted_sum += price_fit * PRICE_WEIGHT
+    if has_gender:
+        weights["gender"] = GENDER_WEIGHT
+        weighted_sum += gender_fit * GENDER_WEIGHT
+    if has_longevity:
+        weights["longevity"] = LONGEVITY_WEIGHT
+        weighted_sum += longevity_fit * LONGEVITY_WEIGHT
+    if has_scenario:
+        weights["scenario"] = SCENARIO_WEIGHT
+        weighted_sum += scenario_fit * SCENARIO_WEIGHT
+    if has_projection:
+        weights["projection"] = PROJECTION_WEIGHT
+        weighted_sum += projection_fit * PROJECTION_WEIGHT
+    if has_age:
+        weights["age"] = AGE_WEIGHT
+        weighted_sum += age_fit * AGE_WEIGHT
+    if has_note_family:
+        weights["note_family"] = NOTE_FAMILY_WEIGHT
+        weighted_sum += note_family_fit * NOTE_FAMILY_WEIGHT
+    if has_bridge:
+        weights["bridge"] = BRIDGE_WEIGHT
+        weighted_sum += bridge_fit * BRIDGE_WEIGHT
+
+    scale = sum(weights.values())
+    total = weighted_sum / scale if scale > 0 else 0.0
     return round(total * 100, 1)
 
 
@@ -233,14 +551,42 @@ def hybrid_score(
 # 2. Deterministic Explanation Generator
 # ---------------------------------------------------------------------------
 
+MATCH_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "but", "of", "in", "on", "for", "with", "without",
+    "to", "is", "it", "its", "my", "your", "some", "any", "no", "not", "want", "wants",
+    "need", "needs", "looking", "smell", "smells", "scent", "scents",
+    "perfume", "perfumes", "fragrance", "fragrances", "notes", "note", "accord", "accords",
+}
+
+
+def _filter_match_terms(query_terms: list[str]) -> list[str]:
+    """Drops generic descriptors ("notes", "scent", "perfume") and short stop
+    words before note/accord matching - otherwise every perfume with a note
+    literally named "green notes" or "woody notes" false-positive matches any
+    query containing the word "notes", regardless of what's actually being
+    searched for."""
+    return [q for q in query_terms if q and q not in MATCH_STOP_WORDS and len(q) >= 3]
+
+
+def _word_prefix_match(term: str, text: str) -> bool:
+    """True if `term` begins at a word boundary inside `text` (not mid-word).
+    Deliberately NOT end-anchored, so "bergamot" still matches inside
+    "bergamots" - but this stops false positives like query term "men"
+    matching inside the note "pimento" (the "men" there starts mid-word,
+    with no boundary before it: pi-men-to)."""
+    if not term:
+        return False
+    return re.search(rf"\b{re.escape(term)}", text) is not None
+
+
 def _match_notes(query_terms: list[str], perfume_notes: list[str]) -> list[str]:
     """Find which perfume notes semantically match the query terms."""
-    query_lower = [q.lower() for q in query_terms]
+    terms = _filter_match_terms([q.lower() for q in query_terms])
     matched = []
     for note in perfume_notes:
         n_lower = note.lower()
-        for qt in query_lower:
-            if qt in n_lower or n_lower in qt:
+        for qt in terms:
+            if _word_prefix_match(qt, n_lower) or _word_prefix_match(n_lower, qt):
                 matched.append(note)
                 break
     return matched
@@ -248,12 +594,12 @@ def _match_notes(query_terms: list[str], perfume_notes: list[str]) -> list[str]:
 
 def _match_accords(query_terms: list[str], perfume_accords: list[str]) -> list[str]:
     """Find which accords match the query terms."""
-    query_lower = [q.lower() for q in query_terms]
+    terms = _filter_match_terms([q.lower() for q in query_terms])
     matched = []
     for accord in perfume_accords:
         a_lower = accord.lower()
-        for qt in query_lower:
-            if qt in a_lower or a_lower in qt:
+        for qt in terms:
+            if _word_prefix_match(qt, a_lower) or _word_prefix_match(a_lower, qt):
                 matched.append(accord)
                 break
     return matched
@@ -271,7 +617,7 @@ def _inr(amount: float) -> str:
     return f"₹{round(amount):,}"
 
 
-def _price_phrase(price_inr: Optional[float], budget: Optional[float], rng: random.Random) -> str:
+def _price_phrase(price_inr: float | None, budget: float | None, rng: random.Random) -> str:
     """Budget is a threshold, not something to optimize - only call out exact
     savings when the price is a meaningful fraction of the budget; otherwise
     just confirm it's comfortably affordable."""
@@ -329,10 +675,10 @@ def _build_highlights(
     perfume_accords: list[str],
     scenario_labels: list[str], scenario_fit: float,
     matched_notes: list[str], matched_accords: list[str],
-    longevity_requested: bool, hours_required: Optional[int], longevity_fit: float, longevity_score: Optional[float],
-    projection_preference: Optional[str], projection_fit: float, sillage_score: Optional[float],
+    longevity_requested: bool, hours_required: int | None, longevity_fit: float, longevity_score: float | None,
+    projection_preference: str | None, projection_fit: float, sillage_score: float | None,
     gender_matched: bool,
-    identity_label: Optional[str] = None,
+    identity_label: str | None = None,
 ) -> list[str]:
     """The accord/note signature is ALWAYS this specific perfume's own composition
     (never generic), so it anchors every explanation and guarantees cards differ
@@ -413,7 +759,7 @@ CONFIDENCE_LOW = ["A solid choice worth considering.", "Worth a sample before co
 DEFAULT_VIBE = "carefully tailored"
 
 
-def _vibe_phrase(scenarios: Optional[list[str]]) -> str:
+def _vibe_phrase(scenarios: list[str] | None) -> str:
     """Evocative adjective pair drawn from the actually-detected scenario(s), not a
     crude keyword guess - reuses the same scenario detection already driving the score."""
     vibes = [SCENARIO_MAP[s]["vibe"] for s in (scenarios or []) if s in SCENARIO_MAP and "vibe" in SCENARIO_MAP[s]]
@@ -429,20 +775,20 @@ def generate_explanation(
     perfume_notes: list[str],
     perfume_accords: list[str],
     query: str = "",
-    scenarios: Optional[list[str]] = None,
-    skin_type: Optional[str] = None,
-    budget: Optional[float] = None,
-    price_inr: Optional[float] = None,
+    scenarios: list[str] | None = None,
+    skin_type: str | None = None,
+    budget: float | None = None,
+    price_inr: float | None = None,
     gender_matched: bool = False,
     longevity_requested: bool = False,
-    hours_required: Optional[int] = None,
-    longevity_score: Optional[float] = None,
+    hours_required: int | None = None,
+    longevity_score: float | None = None,
     longevity_fit: float = 1.0,
-    projection_preference: Optional[str] = None,
+    projection_preference: str | None = None,
     projection_fit: float = 1.0,
-    sillage_score: Optional[float] = None,
+    sillage_score: float | None = None,
     scenario_fit: float = 1.0,
-    identity_label: Optional[str] = None,
+    identity_label: str | None = None,
 ) -> str:
     """Deterministic explanation that reads like an LLM wrote it. No API calls, ~0.001s.
 
@@ -496,16 +842,23 @@ def _breakdown_status(fit: float, met: float = 0.85, partial: float = 0.5) -> st
 
 def _build_breakdown(
     scenario_labels: list[str], scenario_fit: float, note_match: float,
-    longevity_requested: bool, hours_required: Optional[int], longevity_fit: float,
-    projection_preference: Optional[str], projection_fit: float,
-    gender: Optional[str], gender_matched: bool, gender_fit: float,
-    price_inr: Optional[float], budget: Optional[float],
-    identity_label: Optional[str] = None,
+    longevity_requested: bool, hours_required: int | None, longevity_fit: float,
+    projection_preference: str | None, projection_fit: float,
+    gender: str | None, gender_matched: bool, gender_fit: float,
+    price_inr: float | None, budget: float | None,
+    identity_label: str | None = None,
     has_reference: bool = False,
+    negated_hit: str | None = None,
+    note_families: list[str] | None = None,
+    note_family_fit: float = 1.0,
+    has_bridge: bool = False,
+    bridge_fit: float = 1.0,
 ) -> list[dict]:
     """Only lists criteria the user actually signalled - matches the 'why it
     scored highly' checklist, not every possible scoring dimension."""
     items = []
+    if negated_hit:
+        items.append({"label": f"Contains excluded note: {negated_hit}", "status": "unmet"})
     if identity_label:
         items.append({"label": f"Exact match: {identity_label}", "status": "met"})
     if scenario_labels:
@@ -514,6 +867,10 @@ def _build_breakdown(
         items.append({"label": f"Composition overlap: {round(note_match * 100)}%", "status": _breakdown_status(note_match, 0.5, 0.2)})
     elif note_match > 0.15:
         items.append({"label": "Scent profile match", "status": _breakdown_status(note_match, 0.6, 0.25)})
+    if note_families:
+        items.append({"label": f"Scent preference: {', '.join(note_families)}", "status": _breakdown_status(note_family_fit, 0.75, 0.4)})
+    if has_bridge:
+        items.append({"label": "Fresh opening, long-lasting base", "status": _breakdown_status(bridge_fit, 0.9, 0.4)})
     if hours_required:
         items.append({"label": f"{hours_required}+ hour longevity", "status": _breakdown_status(longevity_fit)})
     elif longevity_requested:
@@ -534,17 +891,20 @@ def _build_breakdown(
 def rank_and_explain(
     results: list[dict],
     query: str = "",
-    budget: Optional[float] = None,
-    scenarios: Optional[list[str]] = None,
-    skin_type: Optional[str] = None,
-    gender: Optional[str] = None,
-    age: Optional[int] = None,
+    budget: float | None = None,
+    scenarios: list[str] | None = None,
+    skin_type: str | None = None,
+    gender: str | None = None,
+    age: int | None = None,
     longevity_requested: bool = False,
-    hours_required: Optional[int] = None,
-    projection_preference: Optional[str] = None,
-    limit: Optional[int] = None,
-    reference_accords: Optional[list[str]] = None,
-    reference_notes: Optional[list[str]] = None,
+    hours_required: int | None = None,
+    projection_preference: str | None = None,
+    limit: int | None = None,
+    reference_accords: list[str] | None = None,
+    reference_notes: list[str] | None = None,
+    deal_breaker: bool = False,
+    negated_terms: list[str] | None = None,
+    note_families: list[str] | None = None,
 ) -> list[dict]:
     """
     Takes raw DB results (already a widened ANN candidate pool), applies hybrid
@@ -554,10 +914,31 @@ def rank_and_explain(
     target perfume (the 'find a cheaper alternative to X' case) - when present,
     the scent-profile score is a real calculated overlap against that specific
     perfume rather than fuzzy text-vs-query matching.
+
+    When a `budget` is given, the FINAL display order is driven by price rather
+    than by `match_score` alone: by default, the perfume priced nearest the
+    budget ceiling is shown first (they told us their limit; a recommendation
+    that uses more of it is usually the better pick, not a compromise).
+    `deal_breaker=True` flips this to cheapest-first - price becomes the user's
+    overriding concern instead of one signal among several. `match_score` is
+    still used as the pool has already been filtered to relevant candidates
+    (ANN similarity + the SQL price/exclude filters), and breaks ties between
+    same/similar-priced results. With no budget, there's no price ceiling to
+    be "near" or "under", so it falls back to pure match_score ranking.
     """
     query_terms = query.lower().split()
     scenario_labels = [SCENARIO_MAP[s]["label"] for s in (scenarios or []) if s in SCENARIO_MAP]
     has_reference = bool(reference_accords or reference_notes)
+    has_budget = budget is not None and budget > 0
+    has_gender = bool(gender)
+    has_longevity = bool(longevity_requested or hours_required)
+    has_scenario = bool(scenarios)
+    has_projection = bool(projection_preference)
+    has_age = age is not None
+    has_note_family = bool(note_families and any(f in NOTE_FAMILIES for f in note_families))
+    wants_fresh = bool(set(scenarios or []) & FRESH_SCENARIOS) or bool(set(note_families or []) & FRESH_NOTE_FAMILIES)
+    wants_strong_longevity = bool(hours_required and hours_required >= 6)
+    has_bridge = wants_fresh and wants_strong_longevity
 
     for r in results:
         raw_sim = r.get("similarity")
@@ -582,30 +963,44 @@ def rank_and_explain(
             note_match = min(1.0, (len(matched_notes) + len(matched_accords)) / 5.0)
 
         perfume_gender = r.get("gender")
-        gender_matched = bool(gender and perfume_gender and perfume_gender == gender)
         gender_fit = _gender_fit(perfume_gender, gender)
+        if gender_fit == 1.0:
+            gender_fit = _gender_leaning_modifier(perfume_gender, gender, perfume_notes, perfume_accords)
+        gender_matched = (perfume_gender == gender or perfume_gender == "unisex") and gender_fit >= 0.9
 
+        perfume_type = r.get("type")
         longevity_score = r.get("longevity_score")
-        longevity_fit = _longevity_fit(longevity_score, longevity_requested, hours_required)
-
         sillage_score = r.get("sillage_score")
+        longevity_score, sillage_score = _adjust_performance_by_type(longevity_score, sillage_score, perfume_type)
+
+        longevity_fit = _longevity_fit(longevity_score, longevity_requested, hours_required)
         projection_fit = _projection_fit(sillage_score, projection_preference)
 
-        scenario_fit = _scenario_fit(perfume_accords, scenarios or [])
+        scenario_fit = _scenario_fit(perfume_accords, perfume_notes, scenarios or [])
         age_fit = _age_fit(perfume_accords, age)
+        price_fit = _price_fit(price, budget, deal_breaker)
+        note_family_fit = _note_family_fit(perfume_notes, perfume_accords, note_families)
+        bridge_fit = _bridge_fit(
+            r.get("top_notes", []), r.get("base_notes", []), perfume_accords, wants_fresh, wants_strong_longevity,
+        )
 
         base_score = hybrid_score(
-            cos_sim, price, budget, note_match=note_match,
+            cos_sim, price_fit=price_fit, note_match=note_match,
             gender_fit=gender_fit, longevity_fit=longevity_fit,
             scenario_fit=scenario_fit, projection_fit=projection_fit, age_fit=age_fit,
+            note_family_fit=note_family_fit, bridge_fit=bridge_fit,
+            has_budget=has_budget, has_gender=has_gender, has_longevity=has_longevity,
+            has_scenario=has_scenario, has_projection=has_projection, has_age=has_age,
+            has_note_family=has_note_family, has_bridge=has_bridge,
         )
         identity_bonus, identity_label = _identity_boost(query, r.get("brand", ""), r.get("perfume", ""))
+        negation_fit, negated_hit = _negation_penalty(perfume_accords, perfume_notes, negated_terms)
         # Keep the uncapped score for sorting - two results that both exceed
         # 100 and get capped to the same displayed value would otherwise tie
         # and fall back to incidental input order, silently discarding a real
         # difference (e.g. a more specific flanker match vs. a partial one).
-        r["_raw_score"] = base_score + identity_bonus
-        r["match_score"] = min(100.0, round(base_score + identity_bonus, 1))
+        r["_raw_score"] = (base_score + identity_bonus) * negation_fit
+        r["match_score"] = min(100.0, round((base_score + identity_bonus) * negation_fit, 1))
         r["savings"] = round(budget - price, 2) if budget and price and price < budget else None
         r["estimated_wear_hours"] = estimate_wear_hours(longevity_score)
         r["projection_label"] = sillage_label(sillage_score)
@@ -615,7 +1010,8 @@ def rank_and_explain(
             longevity_requested, hours_required, longevity_fit,
             projection_preference, projection_fit,
             gender, gender_matched, gender_fit,
-            price, budget, identity_label, has_reference,
+            price, budget, identity_label, has_reference, negated_hit,
+            note_families, note_family_fit, has_bridge, bridge_fit,
         )
         r["explanation"] = generate_explanation(
             perfume_name=r.get("perfume", ""),
@@ -640,7 +1036,91 @@ def rank_and_explain(
             identity_label=identity_label,
         )
 
-    results.sort(key=lambda x: x["_raw_score"], reverse=True)
+    apply_price_order(results, budget, deal_breaker, score_key="_raw_score")
     for r in results:
         r.pop("_raw_score", None)
     return results[:limit] if limit else results
+
+
+def apply_price_order(
+    results: list[dict], budget: float | None, deal_breaker: bool = False, score_key: str = "match_score",
+) -> list[dict]:
+    """Sorts `results` in place by the same budget-aware rule `rank_and_explain`
+    uses, and also returns it (for chaining). Exposed separately so callers can
+    re-apply it AFTER the optional LLM re-ranking layer, which re-orders by its
+    own relevance judgment and would otherwise silently discard the
+    nearest-to-budget/cheapest-first ordering the user asked for."""
+    if budget:
+        if deal_breaker:
+            # Cheapest first. match_score as tiebreaker for equal/near-equal prices.
+            results.sort(key=lambda x: (x.get("price_inr") if x.get("price_inr") is not None else float("inf"), -(x.get(score_key) or 0)))
+        else:
+            # Nearest the budget ceiling first (all candidates are already <= budget).
+            results.sort(key=lambda x: (-(x.get("price_inr") or 0), -(x.get(score_key) or 0)))
+    else:
+        # No budget given at all - nothing to be "near" or "under", so pure quality ranking.
+        results.sort(key=lambda x: x.get(score_key) or 0, reverse=True)
+    return results
+
+
+def cap_per_brand(results: list[dict], limit: int, max_per_brand: int = 2, backfill: bool = True) -> list[dict]:
+    """Enforces a maximum number of results per brand while preserving rank
+    order.
+
+    Why this exists: for a low-signal query (no scent/budget/gender given -
+    just an occasion), deterministic scores cluster very close together
+    (e.g. 59.4-59.6%), so a brand with several near-identically-scored SKUs
+    can legitimately dominate the top of the ranking on pure score alone.
+    The optional LLM re-ranking layer's prompt asks it to prefer variety
+    across brands, but that is advisory, not enforced - verified empirically
+    across many live runs of the same query, which kept returning 3-4-of-6
+    results from a single brand despite the instruction.
+
+    `backfill=True` (the default - use for the *final* result set, at the
+    real user-facing `limit` like 6): if the strict cap leaves fewer than
+    `limit` results, relax the cap by one and re-scan, repeating only as many
+    times as actually needed, spreading any forced extra fairly across every
+    over-represented brand rather than dumping it all on whichever one
+    happens to have the most leftovers.
+
+    `backfill=False` (use for the *wide pre-LLM candidate pool*, e.g. 25):
+    just the strict cap, nothing more. Backfilling this stage doesn't make
+    sense - relaxing to fill a large `fetch_limit` (25) when only a handful
+    of distinct brands score well for this query would relax the cap far
+    more than the real, final `limit` (6) ever needs, handing the LLM a pool
+    that's already skewed again. The actual bug this shipped with: capping
+    the wide pool *with* backfill against `fetch_limit` let one brand climb
+    back up to 3-4 entries in the 25-candidate pool, which the LLM (or a
+    disabled-LLM truncation) could then return in full - caught by live
+    testing (3-4 "All Good Scents" in several of 15 runs) even after the
+    first backfill-fairness fix, and only surfaced because a real HTTP call
+    was made repeatedly, not just because the unit tests passed.
+
+    Applied twice per request regardless of which path produced the final
+    results: once (strict) on the wide pool before the optional LLM ever
+    sees it, and once more (with backfill) on whatever comes back - from the
+    LLM or the deterministic path alike - so the guarantee holds unconditionally,
+    not only when Groq happens to be configured and cooperative."""
+    output: list[dict] = []
+    added = [False] * len(results)
+    cap = max_per_brand
+    max_cap = limit if backfill else max_per_brand
+    while len(output) < limit and cap <= max_cap:
+        brand_counts: dict[str, int] = {}
+        for r in output:
+            brand_counts[r.get("brand", "")] = brand_counts.get(r.get("brand", ""), 0) + 1
+        progressed = False
+        for i, r in enumerate(results):
+            if added[i] or len(output) >= limit:
+                continue
+            brand = r.get("brand", "")
+            if brand_counts.get(brand, 0) < cap:
+                output.append(r)
+                added[i] = True
+                brand_counts[brand] = brand_counts.get(brand, 0) + 1
+                progressed = True
+        if not backfill:
+            break
+        if not progressed:
+            cap += 1
+    return output[:limit]

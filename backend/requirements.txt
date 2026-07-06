@@ -7,3 +7,10 @@ pydantic-settings==2.7.1
 python-dotenv==1.0.1
 numpy==2.2.1
 httpx==0.28.1
+
+# Schema migrations (backend/app/db/migrations/). Alembic needs its own
+# synchronous driver (psycopg2) for running DDL - independent of asyncpg,
+# which remains the only DB driver on the actual request-serving path.
+alembic==1.18.5
+sqlalchemy==2.0.51
+psycopg2-binary==2.9.12

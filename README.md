@@ -1,184 +1,110 @@
-# AuraMatch AI 🧪
+# AuraMatch AI - Olfactory Matching & Suggestion Platform
 
-AuraMatch is an AI-powered, deterministic fragrance recommendation engine. It translates natural language human contexts (e.g., *"I need a summer scent for the gym because I sweat"*) into semantic vector embeddings to match users with high-end fragrances and budget-friendly formulation alternatives (dupes).
+AuraMatch AI is a semantic fragrance matching and recommendation application. It translates natural language context (such as, "I need a fresh summer scent for the office commute that projects well") into high-dimensional vector embeddings, conducting similarity queries against a database of over 40,000 scents to identify optimal fragrance choices and budget-friendly alternatives.
 
-![AuraMatch Stack](https://img.shields.io/badge/Stack-React%20%7C%20FastAPI%20%7C%20PostgreSQL%20%7C%20Docker-1A1A1A?style=for-the-badge)
+---
 
-## 🎯 Why This Project?
+## 1. Project Motivation and Technical Novelty
 
-Traditional e-commerce recommendation systems rely on rigid keyword tags (e.g., `SELECT * WHERE tag='aquatic'`). This fails to capture the nuanced, subjective nature of olfactory profiles. 
+### 1.1 Why This Project?
+Traditional retail search systems rely on simple keyword matches (e.g. tag containment searches). This approach fails to capture the complex, subjective, and layered properties of fragrance profiles. AuraMatch AI solves this by combining semantic vector searching with a deterministic olfactory decision engine. The platform goes beyond simple nearest-neighbor calculations, evaluating candidate profiles on budget metrics, volatility constraints, gender indicators, and scent notes.
 
-I chose to build AuraMatch to solve this friction point using **Machine Learning and Semantic Vector Search**. Instead of building another generic movie or book recommender, I engineered a highly niche domain (fragrance chemistry) that requires complex hybrid scoring: weighing **Semantic Cosine Similarity** against a dynamic **Price Optimization Decay** algorithm.
+### 1.2 What Makes It Special?
+*   **Decoupled Semantic Retrieval**: The core application runs embedding generation locally using `all-MiniLM-L6-v2`. This design handles matching without mandatory external LLM API dependencies, allowing the application to run fully offline.
+*   **Fail-Safe LLM Re-Ranking**: If a Groq API key is available, an enrichment layer format prompts to generate natural language explanations. This layer is protected by a circuit breaker; if the external API times out or fails, the engine falls back to the deterministic match results instantly with zero user-facing latency.
+*   **Priority-Based Ingestion**: The system handles duplicate records using case-insensitive normalized keys and source-priority hierarchies. Highly curated listings automatically override lower-quality batch CSV imports during upserts.
+*   **Schema Migration Safety**: Schema modifications are tracked dynamically via Alembic migrations, allowing database structures to evolve without data loss.
 
-## ✨ What Makes It Special? (Deterministic-First, LLM-Optional)
+---
 
-AuraMatch's core pipeline is a **Retrieval-Augmented Generation (RAG) pipeline that works fully *without* an external LLM** - this is what makes it a genuinely plug-and-play Docker deployment with zero paid-API dependency.
+## 2. Core Architecture and Component Layout
 
-1. The backend embeds the user's natural language query locally using `all-MiniLM-L6-v2`.
-2. It queries PostgreSQL (`pgvector`) for sub-50ms cosine similarity searches across 40,000+ real fragrances.
-3. A Hybrid Scorer algorithm ranks the results on occasion/longevity/projection/note-match/gender/age/price fit.
-4. A deterministic heuristic engine cross-references the matched olfactory notes against the user's scenario to dynamically generate a human-readable explanation of *why* the perfume was chosen.
+AuraMatch AI is built using a decoupled containerized model running on a custom Docker bridge network (`auramatch_net`).
 
-**Optional LLM enrichment layer.** If a `GROQ_API_KEY` is set, an additional layer (`app/services/llm_enrichment.py`) sends the deterministic engine's own wider candidate pool (real accords/notes/scores already computed - never invented) to Groq's LLM, which can reorder/drop weak picks and write a richer, more natural explanation grounded strictly in that data. This is a pure enhancement: a strict 3-second timeout wraps the call, and *any* failure (missing key, timeout, network error, malformed response) silently falls back to the deterministic result untouched. `docker compose up` with no `.env` file at all runs the full app correctly in pure-deterministic mode - the LLM layer is additive, never required.
+| Tier | Component | Description |
+| :--- | :--- | :--- |
+| **Presentation** | Next.js 14 Web Application | Built with React, TypeScript, and TailwindCSS. Offers interfaces for context search, details, and duplicate finding. |
+| **Application** | FastAPI Backend API | Written in Python 3.11, using Pydantic validation, asyncpg database pools, and locally hosted SentenceTransformers. |
+| **Persistence** | PostgreSQL 16 + pgvector | Self-contained vector database, pre-loaded with over 40,000 fragrances and optimized with HNSW indices. |
+| **Orchestration**| Docker Compose | Coordinates multi-container network boundaries and environment variables. |
 
-It provides the UX benefits of a Generative AI pipeline with the speed and reliability of a localized microservice, and an optional, fail-safe path to genuine LLM-quality explanations when a key is available.
+For detailed system specs, refer to:
+*   [System Architecture Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/SYSTEM_ARCHITECTURE.md)
+*   [Decision Engine Scoring Logic Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/DECISION_ENGINE.md)
+*   [Data Ingestion and Schema Migrations Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/DATA_INGESTION_PIPELINE.md)
+*   [Third-Party API Integration Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/THIRD_PARTY_API.md)
+*   [Testing & Observability Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/TESTING_AND_OBSERVABILITY.md)
 
-## 🏗️ Architecture & Tech Stack
+---
 
-This project is built using a decoupled, containerized architecture connected via a custom Docker bridge network (`auramatch_net`). There is no external cloud dependency of any kind — the Postgres/pgvector container is the sole, self-contained source of truth, pre-loaded with real data on first boot.
+## 3. How to Run the Application (Plug and Play)
 
-| Layer | Technology | Role |
-|---|---|---|
-| **Frontend** | Next.js 16 (App Router), TypeScript, Tailwind CSS v4, shadcn/ui, framer-motion | Brutalist luxury UI with staggered card reveals |
-| **Backend API** | Python 3.11, FastAPI, asyncpg, Pydantic v2, SentenceTransformers | Async vector search + intent detection + deterministic explanation engine |
-| **Database** | PostgreSQL 16 + pgvector (HNSW index) | 384-d vector storage, sub-50ms ANN queries, gender/longevity/sillage columns |
-| **Containerization** | Docker Compose (custom `auramatch_net` bridge network) | 3 services: db, backend, frontend |
+AuraMatch AI is fully self-contained. No external API keys or cloud credentials are required to start the system.
 
-## 🔧 How It Works (Data Flow)
-
-```
-User Input ("22 male, office commute, gym in the evening, long lasting")
-        │
-        ▼
-[Frontend] POST /api/v1/search/context
-        │
-        ▼
-[Backend] 1. Detect scenarios/gender/longevity intent from the raw text (intent_detector.py)
-          2. Merge with any explicit scenario/gender/scent-preference selections
-          3. Enrich query with the union of matched scenarios' notes/accords
-          4. Generate 384-d embedding via all-MiniLM-L6-v2
-          5. pgvector ANN search over a widened candidate pool
-          6. Hybrid Score = sim×0.50 + note_match×0.20 + price_fit×0.15 + gender_fit×0.07 + longevity_fit×0.08
-          7. Deterministic explanation generator (~0.001s, no LLM)
-        │
-        ▼
-[Frontend] Results grid with match scores + savings + explanations
+### 3.1 Step 1: Clone the Repository
+```bash
+git clone https://github.com/shriyashsawant/JTP-PROJECT-ROUND.git
+cd JTP-PROJECT-ROUND
 ```
 
-## 🚀 How to Run (Plug and Play)
-
-This application is strictly self-contained. No external API keys, cloud database, or Kaggle credentials are required.
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/auramatch-ai.git
-   cd auramatch-ai
-   ```
-
-2. Spin up the ecosystem:
-   ```bash
-   docker compose up --build -d
-   ```
-
-3. Access the interfaces:
-   - **Web Application (UI):** http://localhost:3000
-   - **API Swagger Docs:** http://localhost:8000/docs
-
-> **Note:** The database container initializes with `01_schema.sql` and auto-loads a pre-seeded `02_seed_data.sql.gz` (40K+ perfumes with embeddings already computed) via Postgres's `docker-entrypoint-initdb.d` — no manual seeding step needed. To regenerate or expand the dataset yourself, run `python backend/seed_data.py --da-only --max 8000` (local CSV, no Kaggle needed) or without `--da-only` for the full Kaggle pipeline (requires `kagglehub`).
-
-> **Optional:** to enable the LLM re-ranking/explanation layer, copy `backend/.env.example` to `backend/.env` (for local runs) or drop a `.env` file with `GROQ_API_KEY=...` in the project root next to `docker-compose.yml` (Docker Compose reads it automatically for variable substitution). Without it, the app runs fully and correctly on the deterministic engine alone — this is optional, not required for "plug and play."
-
-## 📂 Project Structure
-
+### 3.2 Step 2: Spin Up Containers
+```bash
+docker compose up --build -d
 ```
-auramatch-ai/
-├── backend/
-│   ├── app/
-│   │   ├── api/               # FastAPI Routes (/search/context, /search/dupe, /perfume/{id}, /health)
-│   │   │   ├── routes_search.py
-│   │   │   └── routes_dupe.py
-│   │   ├── core/
-│   │   │   └── config.py      # Pydantic settings (local Postgres only)
-│   │   ├── models/
-│   │   │   └── schemas.py     # Request/response validation
-│   │   └── services/
-│   │       ├── ml_engine.py         # SentenceTransformer singleton + query builders
-│   │       ├── db_repository.py     # asyncpg vector SQL queries
-│   │       ├── decision_engine.py   # Hybrid scorer + deterministic explanation generator
-│   │       ├── scenario_map.py      # 12 scenarios, 11 note families, keyword banks, accord weights
-│   │       └── intent_detector.py   # Deterministic scenario/gender/longevity extraction from free text
-│   ├── data/
-│   │   ├── 01_schema.sql      # Database schema + vector indexes (runs first)
-│   │   └── 02_seed_data.sql.gz # Pre-seeded 31K+ perfumes with embeddings (runs second, auto-loaded)
-│   ├── seed_data.py           # ETL pipeline: merges datasets, generates embeddings, batch upserts
-│   └── Dockerfile             # Multi-stage: model cached at build time
-├── frontend/
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx           # Landing: "Find your signature. Or steal theirs."
-│   │   │   ├── search/page.tsx    # Vibe Check: free-text + scenario + skin type + budget
-│   │   │   ├── dupe/page.tsx      # Dupe Engine: input luxury name + budget
-│   │   │   ├── perfume/[id]/page.tsx  # Perfume detail with notes, accords, score
-│   │   │   └── about/page.tsx
-│   │   ├── components/
-│   │   │   ├── PerfumeCard.tsx    # Reusable card with match score + explanation
-│   │   │   ├── Navbar.tsx
-│   │   │   └── Footer.tsx
-│   │   └── lib/
-│   │       └── api.ts            # TypeScript API client
-│   ├── next.config.ts         # Standalone output for lean Docker image
-│   └── Dockerfile             # Multi-stage: deps → builder → runner
-├── docker-compose.yml         # 3 services + pgvector + healthchecks
-├── .gitignore
-└── README.md
-```
+*   **Note**: The database container is pre-loaded with schema configurations and seeding files, auto-loading 40K+ perfumes on first boot. The backend container applies any pending database migrations automatically on startup before serving requests - no manual migration step is required.
+*   First boot restores ~40K rows and can take several minutes depending on disk speed; subsequent restarts are fast since the data persists in a Docker volume.
 
-## 📊 Data Pipeline
+### 3.3 Step 3: Access the Interfaces
+*   **Web Portal**: [http://localhost:3000](http://localhost:3000) - the intended way to use the app; no API key needed, the frontend handles this internally (see §7).
+*   **Swagger API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs) - browsable schema reference. To actually call `/search/context`, `/search/dupe`, or `/perfume/{id}` here (via "Try it out"), you need an API key first - see §7.
 
-The seed engine merges up to **4 datasets** (131K raw records → ~50K deduplicated perfumes when run with the full Kaggle pipeline):
+---
 
-| Dataset | Source | Rows | Key Contribution |
-|---|---|---|---|
-| DA Fragrance Analysis | Fragrantica (scraped), local CSV | 38K | Base: brand, perfume, accords, notes |
-| Fragrantica Perfumes | Kaggle | 70K | Volume + structured accords + gender |
-| Fragrantica Cleaned | Kaggle | 24K | Top/middle/base notes, ratings, gender |
-| Nandini Perfumes | Kaggle | 2.2K | Rich descriptions, image URLs |
+## 4. Ingestion Data Structure
 
-The committed `02_seed_data.sql.gz` ships **31K+ deduplicated perfumes** so `docker compose up` works with zero manual steps and no Kaggle credentials.
+The ingestion pipeline deduplicates and processes data from four primary sources:
+1.  **DA Fragrance Analysis (Fragrantica Scraped)**: 38,000 raw rows containing detailed accords and ingredients.
+2.  **Fragrantica Cleaned**: 24,000 rows containing structured top, heart, and base notes.
+3.  **Nandini Perfumes**: 2,200 rows containing image links and product descriptions.
+4.  **Indian Brand Supplement**: Mass-market curated data.
 
-**Gender:** Inferred deterministically from the source `Gender` field where present, and from name-based qualifiers (`Homme`/`Femme`/`for Men`/`for Women`) otherwise — never fabricated when absent.
-**Longevity/Sillage:** No dataset provides real longevity/sillage ratings, so both are computed heuristically at seed time from each perfume's accord composition (heavier accords like oud/amber/leather score higher, fleeting ones like citrus/aquatic score lower), position-weighted by accord prominence.
-**INR Pricing:** Estimated via brand-tier heuristics (Luxury ₹8K–30K → Indian Designer ₹299–2K). All prices in ₹.
+*   **Pricing**: Prices are normalized into INR (₹) using brand-tier estimates (ranging from luxury designers to local brands).
+*   **Longevity/Sillage**: Generated at ingestion using position-weighted accord profiles. Heavier accords (leather, woods) receive higher longevity weights, while highly volatile notes (citrus, green) receive lower weights.
 
-## 🧠 Hybrid Scoring Formula
+---
 
-```
-Final Score = sim×0.50 + note_match×0.20 + price_fit×0.15 + gender_fit×0.07 + longevity_fit×0.08
-
-- sim: pgvector cosine similarity between the enriched query and the perfume
-- note_match: fraction of query terms found verbatim in this perfume's notes/accords
-- price_fit: 1.0 at/below budget/2, linear decay to 0 at budget, 1.0 if no budget set
-- gender_fit / longevity_fit: neutral 1.0 unless the user explicitly signalled that
-  preference (via a field or detected from free text) - never penalizes queries
-  that don't care about gender/longevity
-```
-
-Scenario, gender, and "long lasting" intent are also auto-detected from the raw free-text query (`intent_detector.py`) and merged with any explicit selections, so a single compound sentence like *"22 male, office commute, gym in the evening, long lasting"* blends office + gym scenario notes, infers male, and rewards higher-longevity results — without the user having to fill out a form.
-
-## 🌐 API Endpoints
+## 5. API Reference Endpoints
 
 | Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/api/v1/search/context` | Natural language vibe check with scenario(s) + gender + skin type + scent preference + budget |
-| `POST` | `/api/v1/search/dupe` | Dupe finder: affordable alternatives within budget |
-| `GET` | `/api/v1/perfume/{id}` | Full perfume details |
-| `GET` | `/api/v1/health` | Health check (DB connectivity) |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/search/context` | Evaluates natural language query inputs along with explicit scenario and filter preferences. |
+| `POST` | `/api/v1/search/dupe` | Identifies affordable alternative scents within the specified budget limits. |
+| `GET` | `/api/v1/perfume/{id}` | Returns metadata, sillage/longevity scores, and scent pyramids for a selected perfume. |
+| `GET` | `/api/v1/health` | Verifies database connectivity. |
 
-## 🧪 E2E Validation
+---
 
-The full pipeline was validated end-to-end:
-1. Query: *"summer perfume for gym because I sweat a lot"*
-2. Enriched with gym scenario notes/accords
-3. Embedded → pgvector cosine search → 6 results with 0.67–0.70 similarity
-4. Hybrid scored and explained (deterministic, ~0.001s)
-5. Top result: **love for 3 oranges** (score 76.0, ₹1,087, saves ₹1,913)
+## 6. QA Verification and Testing
 
-## 🧰 Prerequisites
+The application is validated by a test suite comprising **210 unit and integration tests** covering matching logic, intent detection, circuit breaker/rate-limiter operations, API key authentication, schemas, and database fallbacks.
 
-- Docker & Docker Compose
-- Python 3.11+ (for local seed)
-- Node.js 20+ (for local frontend dev)
+To execute tests locally:
+```bash
+cd backend
+.venv\Scripts\python -m pytest
+```
 
-## 📝 License
+Mypy type checking and Ruff lint configurations are fully clean across core service files.
 
-MIT
+---
+
+## 7. Authenticating API Requests
+
+Every search/lookup endpoint (`/search/context`, `/search/dupe`, `/perfume/{id}`) requires an `X-API-Key` header - `/health` is the only exception. The web portal already has its own key baked in at build time, so using [http://localhost:3000](http://localhost:3000) works with no extra steps.
+
+To call the API directly (via `curl`, Postman, or Swagger's "Try it out"), issue yourself a key first:
+```bash
+cd backend
+python scripts/issue_api_key.py --type secret --label "manual testing" --rate-limit 300
+```
+This prints a raw key once (save it - it can't be recovered afterward). Send it as `X-API-Key: <key>` on each request. Full details - the publishable-vs-secret key model, rate limits, and error format - are in [documentation/THIRD_PARTY_API.md](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/THIRD_PARTY_API.md).

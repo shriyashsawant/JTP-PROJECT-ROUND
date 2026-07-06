@@ -8,8 +8,7 @@ import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Home" },
-  { href: "/search", label: "Vibe Check" },
-  { href: "/dupe", label: "Dupe Engine" },
+  { href: "/search", label: "Chat" },
   { href: "/about", label: "About" },
 ];
 
@@ -18,10 +17,13 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
 
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur-sm">
+    <nav className="sticky top-0 z-50 w-full border-b border-border/70 bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
-        <Link href="/" className="text-lg font-bold tracking-tight">
-          AuraMatch
+        <Link
+          href="/"
+          className="font-heading text-xl font-semibold tracking-tight text-foreground"
+        >
+          Aura<span className="text-primary">Match</span>
         </Link>
 
         <div className="hidden items-center gap-8 md:flex">
@@ -30,9 +32,9 @@ export default function Navbar() {
               key={l.href}
               href={l.href}
               className={cn(
-                "text-sm font-medium transition-colors hover:text-foreground",
+                "relative py-1 text-sm font-medium transition-colors hover:text-foreground",
                 pathname === l.href
-                  ? "text-foreground"
+                  ? "text-foreground after:absolute after:-bottom-[17px] after:left-0 after:h-[2px] after:w-full after:rounded-full after:bg-primary after:content-['']"
                   : "text-muted-foreground"
               )}
             >
@@ -43,7 +45,7 @@ export default function Navbar() {
 
         <button
           onClick={() => setOpen(!open)}
-          className="md:hidden"
+          className="text-foreground md:hidden"
           aria-label="Toggle menu"
         >
           {open ? <X size={20} /> : <Menu size={20} />}
@@ -51,7 +53,7 @@ export default function Navbar() {
       </div>
 
       {open && (
-        <div className="border-t border-border px-6 pb-4 pt-2 md:hidden">
+        <div className="border-t border-border/70 px-6 pb-4 pt-2 md:hidden">
           {links.map((l) => (
             <Link
               key={l.href}
@@ -60,7 +62,7 @@ export default function Navbar() {
               className={cn(
                 "block py-2 text-sm font-medium",
                 pathname === l.href
-                  ? "text-foreground"
+                  ? "text-primary"
                   : "text-muted-foreground"
               )}
             >

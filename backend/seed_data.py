@@ -16,6 +16,18 @@ import csv, ast, os, sys, math, random, re, argparse
 from typing import Optional
 from collections import defaultdict
 
+from app.ingestion.contracts import normalize_name
+
+# Priority: scraper_merged (5) > nandini (4) > fra_cleaned (3) > fra_perfumes (2)
+# > da_fragrance (1) > indian_brands (0, unlisted -> default). Used both by the
+# one-time in-memory batch dedup below (load_all_datasets) and by the
+# persisted per-row upsert (seed_local -> app.ingestion.upsert), so a live/
+# repeated ingestion run enforces the exact same source-trust ordering a
+# single batch run always has.
+SOURCE_PRIORITY = {"scraper_merged": 5, "nandini": 4, "fra_cleaned": 3, "fra_perfumes": 2, "da_fragrance": 1}
+
+EMBEDDING_MODEL_VERSION = "all-MiniLM-L6-v2"
+
 # ---------------------------------------------------------------------------
 # INR pricing tiers
 # ---------------------------------------------------------------------------
@@ -71,14 +83,6 @@ def parse_ast_list(val: str) -> list[str]:
             return [n.strip() for n in val.split(",") if n.strip()]
     return []
 
-def normalize_name(s: Optional[str]) -> str:
-    if not s:
-        return ""
-    s = s.strip().lower()
-    s = re.sub(r"[^a-z0-9\s]", "", s)
-    return re.sub(r"\s+", " ", s).strip()
-
-
 # ---------------------------------------------------------------------------
 # Dataset loaders
 # ---------------------------------------------------------------------------
@@ -96,6 +100,7 @@ def load_da_fragrance(path: str) -> list[dict]:
                 "launch_year": row.get("launch_year", "Unknown"),
                 "notes": parse_ast_list(row.get("notes", "")),
                 "accords": parse_ast_list(row.get("main_accords", "")),
+                "notes_top": [], "notes_middle": [], "notes_base": [],
                 "description": "",
                 "image_url": None,
                 "gender": normalize_gender(f"{row['brand']} {row['perfume']}"),
@@ -134,6 +139,7 @@ def load_fra_perfumes(path: str) -> list[dict]:
                 "launch_year": None,
                 "notes": [],
                 "accords": [str(a).strip() for a in accords if a],
+                "notes_top": [], "notes_middle": [], "notes_base": [],
                 "description": desc,
                 "image_url": None,
                 "gender": normalize_gender(row.get("Gender")),
@@ -152,15 +158,24 @@ def load_fra_cleaned(path: str) -> list[dict]:
             perfume = row.get("Perfume", "").strip()
             if not brand or not perfume:
                 continue
-            # Combine top/middle/base notes
-            notes = []
-            for col in ["Top", "Middle", "Base"]:
+            # Combine top/middle/base notes, but also keep the real per-tier
+            # breakdown (this is one of only two sources - the other being
+            # load_scraper_merged - with genuine Fragrantica tier tags rather
+            # than an inferred approximation; see resolve_note_tiers).
+            def _parse_tier(col: str) -> list[str]:
                 val = row.get(col, "")
+                out = []
                 if val:
                     for n in val.split(","):
                         n = n.strip()
                         if n and n.lower() not in ("unknown", "none"):
-                            notes.append(n)
+                            out.append(n)
+                return out
+
+            notes_top = _parse_tier("Top")
+            notes_middle = _parse_tier("Middle")
+            notes_base = _parse_tier("Base")
+            notes = notes_top + notes_middle + notes_base
             # Gather accords
             accords = []
             for i in range(1, 6):
@@ -178,6 +193,18 @@ def load_fra_cleaned(path: str) -> list[dict]:
             except:
                 rating_count = None
 
+            # Combine perfumers
+            p1 = row.get("Perfumer1", "").strip()
+            p2 = row.get("Perfumer2", "").strip()
+            if p1 and p1.lower() != "unknown" and p2 and p2.lower() != "unknown":
+                perfumer = f"{p1} and {p2}"
+            elif p1 and p1.lower() != "unknown":
+                perfumer = p1
+            elif p2 and p2.lower() != "unknown":
+                perfumer = p2
+            else:
+                perfumer = None
+
             rows.append({
                 "brand": brand,
                 "perfume": perfume,
@@ -185,11 +212,15 @@ def load_fra_cleaned(path: str) -> list[dict]:
                 "launch_year": row.get("Year"),
                 "notes": notes,
                 "accords": accords,
+                "notes_top": notes_top, "notes_middle": notes_middle, "notes_base": notes_base,
                 "description": "",
                 "image_url": None,
                 "gender": normalize_gender(row.get("Gender")),
                 "rating": rating,
                 "rating_count": rating_count,
+                "url": row.get("url", "").strip() or None,
+                "country": row.get("Country", "").strip() or None,
+                "perfumer": perfumer,
                 "source": "fra_cleaned",
             })
     return rows
@@ -213,6 +244,7 @@ def load_indian_brands(path: str) -> list[dict]:
                 "launch_year": "Unknown",
                 "notes": [n.strip() for n in row.get("notes", "").split(",") if n.strip()],
                 "accords": [a.strip() for a in row.get("accords", "").split(",") if a.strip()],
+                "notes_top": [], "notes_middle": [], "notes_base": [],
                 "description": "",
                 "image_url": None,
                 "gender": normalize_gender(row.get("gender")),
@@ -242,12 +274,91 @@ def load_nandini(path: str) -> list[dict]:
                 "launch_year": None,
                 "notes": notes,
                 "accords": [],
+                "notes_top": [], "notes_middle": [], "notes_base": [],
                 "description": row.get("Description", "").strip(),
                 "image_url": row.get("Image URL", "").strip() or None,
                 "gender": None,
                 "rating": None,
                 "rating_count": None,
                 "source": "nandini",
+            })
+    return rows
+
+
+def _clean_scraped_title(name: str, brand: str) -> str:
+    """Amazon-scraped product titles carry size/pack/marketing noise the
+    Fragrantica-derived datasets don't ("HONEY Oud Unisex Perfume - 100ml",
+    "Mood Collection Gift Set For Her - 3 x 15ml") - strip it down to
+    something that can actually dedup-match against a clean "brand perfume"
+    key from the other sources."""
+    n = name
+    n = re.sub(r"\s*-\s*\d.*$", "", n).strip()
+    if brand and n.lower().startswith(brand.lower()):
+        n = n[len(brand):].strip(" -")
+    n = re.sub(r"\b(unisex|for\s+men|for\s+women|for\s+her|for\s+him)\b", "", n, flags=re.IGNORECASE)
+    n = re.sub(r"\bperfume\b", "", n, flags=re.IGNORECASE)
+    n = re.sub(r"\s+", " ", n).strip()
+    return n or name
+
+
+def _extract_price_from_listing(raw: str) -> Optional[int]:
+    """`prices` is a stringified list of listing dicts (mrp/discount_price/
+    currency/size_ml/url) - take the first listing's discounted price, or
+    its MRP if no discount is recorded."""
+    if not raw:
+        return None
+    try:
+        parsed = ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        return None
+    if not isinstance(parsed, list) or not parsed:
+        return None
+    first = parsed[0]
+    if not isinstance(first, dict):
+        return None
+    price = first.get("discount_price") or first.get("mrp")
+    try:
+        return int(price) if price else None
+    except (TypeError, ValueError):
+        return None
+
+
+def load_scraper_merged(path: str) -> list[dict]:
+    """Load backend/scraper/data/processed/perfume_dataset_merged.csv - our
+    own Fragrantica-enriched scrape of Amazon-listed Indian-brand perfumes
+    (2.2K rows). Unlike every other source here, this one has 100% real
+    accord coverage AND a genuine Top/Middle/Base note pyramid (not
+    inferred) - see resolve_note_tiers, which prefers real tags like these
+    over the heuristic classifier. Highest merge priority for exactly that
+    reason."""
+    if not os.path.exists(path):
+        return []
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            brand = (row.get("brand") or "").strip()
+            raw_name = (row.get("name") or "").strip()
+            if not brand or not raw_name:
+                continue
+            perfume = _clean_scraped_title(raw_name, brand)
+            notes_top = parse_ast_list(row.get("notes.top_notes", ""))
+            notes_middle = parse_ast_list(row.get("notes.middle_notes", ""))
+            notes_base = parse_ast_list(row.get("notes.base_notes", ""))
+            rows.append({
+                "brand": brand,
+                "perfume": perfume,
+                "name": f"{brand} {perfume}",
+                "launch_year": "Unknown",
+                "notes": list(dict.fromkeys(notes_top + notes_middle + notes_base)),
+                "accords": parse_ast_list(row.get("accords", "")),
+                "notes_top": notes_top, "notes_middle": notes_middle, "notes_base": notes_base,
+                "description": "",
+                "image_url": None,
+                "gender": normalize_gender(row.get("gender")),
+                "rating": None,
+                "rating_count": None,
+                "real_price_inr": _extract_price_from_listing(row.get("prices", "")),
+                "source": "scraper_merged",
             })
     return rows
 
@@ -279,8 +390,16 @@ def extract_brand_from_name(name: str) -> str:
     # For now, take last word as brand
     words = name_clean.split()
     if len(words) >= 2:
-        # Check if the last word looks like a known brand
-        return words[-1]
+        brand = words[-1]
+        # The raw format glues "for" directly onto the brand with no space
+        # ("...Afnanfor women"), so the gender-suffix strip above only ever
+        # catches the bare "women"/"men" - this trailing "for" survives onto
+        # whatever the last word is. Confirmed empirically against ~90 real
+        # brand names in production data (Dior, Chanel, Armani, Avon, ...)
+        # with zero false positives - no legitimate brand ends in "for".
+        if brand.lower().endswith("for") and len(brand) > 3:
+            brand = brand[:-3]
+        return brand
     return name_clean
 
 def extract_perfume_from_name(name: str) -> str:
@@ -302,7 +421,11 @@ def extract_perfume_from_name(name: str) -> str:
 # Merge & dedup
 # ---------------------------------------------------------------------------
 def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: bool = False) -> list[dict]:
-    """Load all datasets and merge with dedup. Priority: nandini > fra_cleaned > fra_perfumes > indian_brands > da_fragrance."""
+    """Load all datasets and merge with dedup. Priority: scraper_merged > nandini
+    > fra_cleaned > fra_perfumes > indian_brands > da_fragrance. scraper_merged
+    is highest priority despite being the smallest source (2.2K rows) because
+    it's one of only two sources with a genuine (not inferred) note pyramid,
+    and the only one with 100% real accord coverage."""
     all_rows = []
 
     # 1. DA_Fragrance (base)
@@ -317,6 +440,16 @@ def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: boo
     indian_rows = load_indian_brands(indian_brands_path)
     all_rows.extend(indian_rows)
     print(f"  -> {len(indian_rows)} rows")
+
+    # Scraper-enriched Indian-brand dataset (local file, no Kaggle download -
+    # available regardless of --da-only, same as indian_brands above)
+    scraper_merged_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "scraper", "data", "processed", "perfume_dataset_merged.csv"
+    )
+    print(f"Loading scraper-enriched dataset from {scraper_merged_path}...")
+    scraper_rows = load_scraper_merged(scraper_merged_path)
+    all_rows.extend(scraper_rows)
+    print(f"  -> {len(scraper_rows)} rows")
 
     if da_only:
         print("  Skipping Fragrantica & Nandini (--da-only)")
@@ -348,24 +481,29 @@ def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: boo
     print(f"  -> {len(all_rows)} rows")
 
     # Dedup by normalized brand+perfume
-    # Priority: nandini (4) > fra_cleaned (3) > fra_perfumes (2) > da_fragrance (1)
-    source_priority = {"nandini": 4, "fra_cleaned": 3, "fra_perfumes": 2, "da_fragrance": 1}
     seen = {}
     deduped = []
     for row in all_rows:
         key = (normalize_name(row["brand"]), normalize_name(row["perfume"]))
         if key in seen:
             existing = seen[key]
-            existing_priority = source_priority.get(existing["source"], 0)
-            new_priority = source_priority.get(row["source"], 0)
+            existing_priority = SOURCE_PRIORITY.get(existing["source"], 0)
+            new_priority = SOURCE_PRIORITY.get(row["source"], 0)
             if new_priority > existing_priority:
                 # Merge: keep existing fields that new row doesn't have
-                for field in ["notes", "accords", "description", "image_url", "gender", "rating", "rating_count", "launch_year"]:
+                for field in ["notes", "accords", "notes_top", "notes_middle", "notes_base",
+                               "description", "image_url", "gender", "rating", "rating_count",
+                               "launch_year", "url", "country", "perfumer"]:
                     if not row.get(field) and existing.get(field):
                         row[field] = existing[field]
-                # Merge notes and accords (dedup within)
+                # Merge list fields (dedup within) rather than a full overwrite,
+                # so a lower-priority source's real tier tags aren't discarded
+                # just because a higher-priority source also had some notes.
                 row["notes"] = list(dict.fromkeys(existing["notes"] + row["notes"]))
                 row["accords"] = list(dict.fromkeys(existing["accords"] + row["accords"]))
+                row["notes_top"] = list(dict.fromkeys((existing.get("notes_top") or []) + (row.get("notes_top") or [])))
+                row["notes_middle"] = list(dict.fromkeys((existing.get("notes_middle") or []) + (row.get("notes_middle") or [])))
+                row["notes_base"] = list(dict.fromkeys((existing.get("notes_base") or []) + (row.get("notes_base") or [])))
                 seen[key] = row
         else:
             seen[key] = row
@@ -379,6 +517,9 @@ def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: boo
     print(f"  With ratings: {sum(1 for r in deduped if r['rating'])}")
     print(f"  With launch_year: {sum(1 for r in deduped if r['launch_year'])}")
     print(f"  With gender: {sum(1 for r in deduped if r['gender'])}")
+    print(f"  With url: {sum(1 for r in deduped if r.get('url'))}")
+    print(f"  With country: {sum(1 for r in deduped if r.get('country'))}")
+    print(f"  With perfumer: {sum(1 for r in deduped if r.get('perfumer'))}")
 
     if max_rows and max_rows < len(deduped):
         deduped = deduped[:max_rows]
@@ -435,6 +576,31 @@ def compute_longevity_sillage(accords: list[str], notes: list[str]) -> tuple[flo
     return round(longevity, 1), round(sillage, 1)
 
 
+def resolve_note_tiers(row: dict) -> tuple[list[str], list[str], list[str]]:
+    """Prefer real Top/Middle/Base tags carried through from load_fra_cleaned
+    or load_scraper_merged (row["notes_top"/"notes_middle"/"notes_base"]);
+    only run the heuristic classifier (scenario_map.classify_note_tiers) on
+    whatever notes in the final merged `notes` union aren't already covered
+    by a real tag. This matters for rows assembled from multiple sources
+    during dedup - a perfume might have real tier tags for some of its notes
+    (from whichever source provided them) and merged-in untagged notes from
+    another source, and a row shouldn't lose the real data it does have just
+    because it also has gaps."""
+    from app.services.scenario_map import classify_note_tiers
+
+    real_top = row.get("notes_top") or []
+    real_middle = row.get("notes_middle") or []
+    real_base = row.get("notes_base") or []
+    tagged = {n.lower() for n in real_top + real_middle + real_base}
+    untagged = [n for n in (row.get("notes") or []) if n.lower() not in tagged]
+    inferred_top, inferred_heart, inferred_base = classify_note_tiers(untagged)
+    return (
+        list(dict.fromkeys(real_top + inferred_top)),
+        list(dict.fromkeys(real_middle + inferred_heart)),
+        list(dict.fromkeys(real_base + inferred_base)),
+    )
+
+
 def normalize_gender(raw: Optional[str]) -> Optional[str]:
     """Map varied source vocabularies ('for women', 'Women', 'Unisex', 'for women and
     men', 'pour homme', 'Femme'...) to a canonical male/female/unisex/None.
@@ -470,59 +636,72 @@ def build_embedding_text(row: dict) -> str:
 
 
 def seed_local(perfumes: list[dict], conn_string: str):
-    """Seed into local pgvector via asyncpg."""
+    """Seed into local pgvector via asyncpg. Upserts (not insert-only) - a
+    repeated/live run updates existing rows in place (respecting each
+    record's source_priority) instead of silently skipping them, so this
+    same function is safe to run more than once as ingestion becomes a
+    recurring/live process rather than a single one-shot batch."""
     import asyncpg, asyncio
     from sentence_transformers import SentenceTransformer
     import torch
 
+    from app.ingestion.contracts import PerfumeRecord
+    from app.ingestion.upsert import upsert_perfume
+    from app.ingestion.validators import validate_record
+
     has_cuda = torch.cuda.is_available()
     device = "cuda" if has_cuda else "cpu"
     print(f"Using device: {device}")
-    model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+    model = SentenceTransformer(EMBEDDING_MODEL_VERSION, device=device)
 
     async def run():
         conn = await asyncpg.connect(conn_string)
-        inserted = 0
+        upserted = 0
+        invalid = 0
         errors = 0
-        batch_size = 100
 
         for i, row in enumerate(perfumes):
             text = build_embedding_text(row)
             embedding = generate_embedding(model, text)
             price = row.get("real_price_inr") or estimate_inr_price(row["brand"])
             longevity_score, sillage_score = compute_longevity_sillage(row["accords"], row["notes"])
+            top_notes, heart_notes, base_notes = resolve_note_tiers(row)
+
+            record = PerfumeRecord(
+                brand=row["brand"], perfume=row["perfume"], name=row.get("name") or "",
+                launch_year=row.get("launch_year") or "Unknown", gender=row.get("gender"),
+                accords=row["accords"] or [], notes=row["notes"] or [],
+                notes_top=top_notes, notes_middle=heart_notes, notes_base=base_notes,
+                description=row.get("description") or "", image_url=row.get("image_url"),
+                rating=row.get("rating"), rating_count=row.get("rating_count"),
+                real_price_inr=price, url=row.get("url"), country=row.get("country"),
+                perfumer=row.get("perfumer"), source=row.get("source", "unknown"),
+                source_priority=SOURCE_PRIORITY.get(row.get("source"), 0),
+            )
+
+            issues = validate_record(record)
+            if issues:
+                invalid += 1
+                if invalid <= 3:
+                    print(f"  Invalid record skipped ({record.brand}/{record.perfume}): {issues}")
+                continue
 
             try:
-                await conn.execute("""
-                    INSERT INTO perfumes
-                        (brand, perfume, launch_year, gender, main_accords, notes,
-                         embedding, price_inr, type, image_url,
-                         longevity_score, sillage_score)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7::vector,$8,$9,$10,$11,$12)
-                    ON CONFLICT DO NOTHING
-                """,
-                    row["brand"], row["perfume"],
-                    row.get("launch_year") or "Unknown",
-                    row.get("gender"),
-                    row["accords"] if row["accords"] else None,
-                    row["notes"] if row["notes"] else None,
-                    to_pgvector_literal(embedding), price, None,
-                    row.get("image_url"),
-                    longevity_score, sillage_score,
+                await upsert_perfume(
+                    conn, record, to_pgvector_literal(embedding),
+                    longevity_score, sillage_score, model_version=EMBEDDING_MODEL_VERSION,
                 )
-                inserted += 1
+                upserted += 1
             except Exception as e:
                 errors += 1
                 if errors <= 3:
                     print(f"  Error: {e}")
 
             if (i + 1) % 500 == 0:
-                await conn.execute("COMMIT")
-                print(f"  [{i+1}/{len(perfumes)}] inserted: {inserted}, errors: {errors}")
+                print(f"  [{i+1}/{len(perfumes)}] upserted: {upserted}, invalid: {invalid}, errors: {errors}")
 
-        await conn.execute("COMMIT")
         count = await conn.fetchval("SELECT COUNT(*) FROM perfumes")
-        print(f"\nDone! Inserted: {inserted}, Errors: {errors}, Total in DB: {count}")
+        print(f"\nDone! Upserted: {upserted}, Invalid: {invalid}, Errors: {errors}, Total in DB: {count}")
         await conn.close()
 
     asyncio.run(run())

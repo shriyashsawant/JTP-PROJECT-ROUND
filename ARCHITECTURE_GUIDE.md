@@ -1,5 +1,7 @@
 # Perfume Suggestion Platform — Architecture & Implementation Guide
 
+> **⚠️ Historical planning document.** This was written before implementation began and describes the *original plan* (e.g. an Nginx reverse proxy, a `scent_net` network) - not all of it matches the system as actually built. For accurate, verified documentation of the current system, see **[documentation/README.md](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/README.md)**. Kept here for provenance - it shows the original design thinking this project started from.
+
 > **Project**: AuraMatch AI — AI-Powered Fragrance Recommendation Engine  
 > **Deadline**: July 8, 2026  
 > **Based on**: Problem Statement + PRD + 3 Reference Projects

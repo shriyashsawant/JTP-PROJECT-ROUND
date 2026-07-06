@@ -1,6 +1,9 @@
+import asyncio
+
 from sentence_transformers import SentenceTransformer
-from app.services.scenario_map import SCENARIO_MAP, NOTE_FAMILIES, SKIN_TYPE_MODIFIERS
+
 from app.core.config import settings
+from app.services.scenario_map import NOTE_FAMILIES, SCENARIO_MAP, SKIN_TYPE_MODIFIERS
 
 _model = None
 
@@ -13,7 +16,12 @@ def get_model():
 def generate_embedding(text: str) -> list[float]:
     return get_model().encode(text).tolist()
 
-def _scenario_terms(scenarios: list[str], key: str, cap: int) -> list[str]:
+async def generate_embedding_async(text: str) -> list[float]:
+    """CPU-bound SentenceTransformer inference offloaded to a worker thread
+    so it doesn't block the event loop while other requests are in flight."""
+    return await asyncio.to_thread(generate_embedding, text)
+
+def _scenario_terms(scenarios: list[str] | None, key: str, cap: int) -> list[str]:
     """Union accords/notes across every matched scenario (deduped, capped)."""
     seen = []
     for scenario in scenarios or []:
@@ -26,9 +34,9 @@ def _scenario_terms(scenarios: list[str], key: str, cap: int) -> list[str]:
     return seen[:cap]
 
 def build_context_query(
-    query: str, scenarios: list[str] = None, skin_type: str = None,
-    note_families: list[str] = None, reference_accords: list[str] = None,
-    reference_notes: list[str] = None,
+    query: str, scenarios: list[str] | None = None, skin_type: str | None = None,
+    note_families: list[str] | None = None, reference_accords: list[str] | None = None,
+    reference_notes: list[str] | None = None,
 ) -> str:
     """Build a rich search query from user input + optional scenarios + skin type + scent preference.
 
@@ -54,9 +62,9 @@ def build_context_query(
     return ". ".join(parts)
 
 def build_budget_query(
-    perfume_name: str, scenarios: list[str] = None, skin_type: str = None,
-    note_families: list[str] = None, reference_accords: list[str] = None,
-    reference_notes: list[str] = None,
+    perfume_name: str, scenarios: list[str] | None = None, skin_type: str | None = None,
+    note_families: list[str] | None = None, reference_accords: list[str] | None = None,
+    reference_notes: list[str] | None = None,
 ) -> str:
     """Build a query for dupe engine: find perfumes similar to this one.
 

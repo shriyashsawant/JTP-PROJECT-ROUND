@@ -8,9 +8,17 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 FROM python:3.11-slim
 WORKDIR /app
-COPY --from=builder /root/.cache /root/.cache
+
+RUN addgroup --system --gid 1001 appuser && \
+    adduser --system --uid 1001 --gid 1001 --home /home/appuser appuser
+
+ENV HF_HOME=/home/appuser/.cache/huggingface
+COPY --from=builder --chown=appuser:appuser /root/.cache /home/appuser/.cache
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
-COPY . .
+COPY --chown=appuser:appuser . .
+RUN chmod +x entrypoint.sh
+
+USER appuser
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["./entrypoint.sh"]

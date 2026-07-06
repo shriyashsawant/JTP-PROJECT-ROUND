@@ -37,6 +37,7 @@ services:
       DATABASE_URL: postgresql://auramatch:auramatch_secret@db:5432/auramatch
       MODEL_NAME: all-MiniLM-L6-v2
       DEBUG: "false"
+      CORS_ORIGINS: http://localhost:3000
       # Optional - LLM re-ranking/explanation layer is skipped entirely if this
       # is unset, so `docker compose up` still works with no .env file at all.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
@@ -44,7 +45,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - model_cache:/root/.cache/huggingface
+      - model_cache:/home/appuser/.cache/huggingface
     networks:
       - auramatch_net
 
@@ -52,11 +53,19 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        # Publishable key (see documentation/THIRD_PARTY_API.md) issued via
+        # backend/scripts/issue_api_key.py --type publishable --origin
+        # http://localhost:3000 - safe to embed here by design, restricted
+        # server-side by that Origin allowlist, not a secret.
+        NEXT_PUBLIC_API_KEY: pk_live_f3o8eLGSmio2iWVDzyG25ppqPVz0sCMy_5vUh6cAtZ8
     restart: unless-stopped
     ports:
       - "3000:80"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_KEY: pk_live_f3o8eLGSmio2iWVDzyG25ppqPVz0sCMy_5vUh6cAtZ8
     depends_on:
       - backend
     networks:
