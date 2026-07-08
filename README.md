@@ -47,6 +47,7 @@ For detailed system specs, refer to:
 *   [Data Ingestion and Schema Migrations Guide](documentation/DATA_INGESTION_PIPELINE.md)
 *   [Third-Party API Integration Guide](documentation/THIRD_PARTY_API.md)
 *   [Testing & Observability Guide](documentation/TESTING_AND_OBSERVABILITY.md)
+*   [Groq LLM Setup & Configuration Guide](documentation/GROQ_SETUP.md)
 
 ---
 
@@ -71,6 +72,22 @@ docker compose up --build -d
 ### 3.3 Step 3: Access the Interfaces
 *   **Web Portal**: [http://localhost:3000](http://localhost:3000) - the intended way to use the app; no API key needed, the frontend handles this internally (see §7).
 *   **Swagger API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs) - browsable schema reference. To actually call `/search/context`, `/search/dupe`, or `/perfume/{id}` here (via "Try it out"), you need an API key first - see §7.
+
+### 3.4 Step 4: Configure Groq LLM Re-Ranking (Optional)
+To enable the AI-powered natural language explanations:
+1. **Locate the Project Root Directory**: Ensure you are in the main project folder (`JTP-PROJECT-ROUND/` which contains `docker-compose.yml`, `backend/`, and `frontend/`).
+2. **Create the Environment File**:
+   * **Exact Name**: The file must be named exactly `.env` (with a leading dot and no file extension like `.txt` or `.env.txt`).
+   * **Exact Path**: `JTP-PROJECT-ROUND/.env`
+3. **Configure the API Key**: Open the `.env` file in a text editor and add the following line:
+   ```env
+   GROQ_API_KEY=gsk_your_groq_api_key_here
+   ```
+4. **Apply Changes**: Spin up or restart the containers so that Docker Compose picks up the `.env` variables:
+   ```bash
+   docker compose up -d
+   ```
+For troubleshooting and verification steps, see the full [Groq LLM Setup Guide](documentation/GROQ_SETUP.md).
 
 ---
 

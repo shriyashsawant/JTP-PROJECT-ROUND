@@ -27,6 +27,9 @@ Welcome to the engineering documentation hub for AuraMatch AI. This documentatio
 ### 1.6 [Third-Party API Integration Guide](THIRD_PARTY_API.md)
 * Two-tier API key model (publishable vs. secret), token-bucket rate limiting, error format, key issuance, and the `/api/v1` versioning commitment.
 
+### 1.7 [Groq LLM Setup & Configuration Guide](GROQ_SETUP.md)
+* How to obtain, configure, and verify the optional Groq API key for fail-safe LLM re-ranking.
+
 ---
 
 ## 2. Technical Stack Summary
