@@ -1,0 +1,20 @@
+# Ensure consistent line endings across platforms, regardless of local core.autocrlf.
+# Without this, Windows checkouts (core.autocrlf=true) rewrite LF to CRLF, which breaks
+# shebangs in shell scripts copied into Docker images (e.g. backend/entrypoint.sh).
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary files should never be touched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
