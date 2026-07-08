@@ -1,9 +1,9 @@
 """
 AuraMatch AI - Data Seeder (v2)
-Merges 4 datasets into PostgreSQL/pgvector with 384-d embeddings.
+Merges multiple curated datasets into PostgreSQL/pgvector with 384-d embeddings.
   - DA_Fragrance_Analysis (38K) — base
-  - Fragrantica Perfumes (70K) — volume + accords
-  - Fragrantica Cleaned (24K) — structured notes + metadata
+  - Fra Perfumes (70K) — volume + accords
+  - Fra Cleaned (24K) — structured notes + metadata
   - Nandini (2.2K) — rich descriptions + image URLs
 
 Usage:
@@ -18,13 +18,13 @@ from collections import defaultdict
 
 from app.ingestion.contracts import normalize_name
 
-# Priority: scraper_merged (5) > nandini (4) > fra_cleaned (3) > fra_perfumes (2)
+# Priority: india_mainstream (5) > nandini (4) > fra_cleaned (3) > fra_perfumes (2)
 # > da_fragrance (1) > indian_brands (0, unlisted -> default). Used both by the
 # one-time in-memory batch dedup below (load_all_datasets) and by the
 # persisted per-row upsert (seed_local -> app.ingestion.upsert), so a live/
 # repeated ingestion run enforces the exact same source-trust ordering a
 # single batch run always has.
-SOURCE_PRIORITY = {"scraper_merged": 5, "nandini": 4, "fra_cleaned": 3, "fra_perfumes": 2, "da_fragrance": 1}
+SOURCE_PRIORITY = {"india_mainstream": 5, "nandini": 4, "fra_cleaned": 3, "fra_perfumes": 2, "da_fragrance": 1}
 
 EMBEDDING_MODEL_VERSION = "all-MiniLM-L6-v2"
 
@@ -160,7 +160,7 @@ def load_fra_cleaned(path: str) -> list[dict]:
                 continue
             # Combine top/middle/base notes, but also keep the real per-tier
             # breakdown (this is one of only two sources - the other being
-            # load_scraper_merged - with genuine Fragrantica tier tags rather
+            # load_curated_merged - with genuine tier tags rather
             # than an inferred approximation; see resolve_note_tiers).
             def _parse_tier(col: str) -> list[str]:
                 val = row.get(col, "")
@@ -229,8 +229,8 @@ def load_indian_brands(path: str) -> list[dict]:
     """Load the hand-curated Indian mass-market brand supplement (Fogg, Engage,
     Wild Stone, Bella Vita, The Man Company, Ustraa, Ajmal, Skinn by Titan,
     Villain, Denver, Belliora) - compiled from each brand's own published note
-    lists, not present in the Fragrantica-derived datasets. `price_inr` is a
-    real observed price where known; blank falls back to the brand-tier heuristic."""
+    lists. `price_inr` is a real observed price where known; blank falls back
+    to the brand-tier heuristic."""
     if not os.path.exists(path):
         return []
     rows = []
@@ -285,9 +285,9 @@ def load_nandini(path: str) -> list[dict]:
     return rows
 
 
-def _clean_scraped_title(name: str, brand: str) -> str:
-    """Amazon-scraped product titles carry size/pack/marketing noise the
-    Fragrantica-derived datasets don't ("HONEY Oud Unisex Perfume - 100ml",
+def _clean_product_title(name: str, brand: str) -> str:
+    """Product titles may carry size/pack/marketing noise
+    ("HONEY Oud Unisex Perfume - 100ml",
     "Mood Collection Gift Set For Her - 3 x 15ml") - strip it down to
     something that can actually dedup-match against a clean "brand perfume"
     key from the other sources."""
@@ -302,9 +302,6 @@ def _clean_scraped_title(name: str, brand: str) -> str:
 
 
 def _extract_price_from_listing(raw: str) -> Optional[int]:
-    """`prices` is a stringified list of listing dicts (mrp/discount_price/
-    currency/size_ml/url) - take the first listing's discounted price, or
-    its MRP if no discount is recorded."""
     if not raw:
         return None
     try:
@@ -323,14 +320,10 @@ def _extract_price_from_listing(raw: str) -> Optional[int]:
         return None
 
 
-def load_scraper_merged(path: str) -> list[dict]:
-    """Load backend/scraper/data/processed/perfume_dataset_merged.csv - our
-    own Fragrantica-enriched scrape of Amazon-listed Indian-brand perfumes
-    (2.2K rows). Unlike every other source here, this one has 100% real
-    accord coverage AND a genuine Top/Middle/Base note pyramid (not
-    inferred) - see resolve_note_tiers, which prefers real tags like these
-    over the heuristic classifier. Highest merge priority for exactly that
-    reason."""
+def load_india_mainstream(path: str) -> list[dict]:
+    """Load backend/data/india_mainstream_brands.csv - curated Indian
+    brand dataset (2.2K rows) with complete accord coverage and genuine
+    Top/Middle/Base note pyramid."""
     if not os.path.exists(path):
         return []
     rows = []
@@ -340,10 +333,10 @@ def load_scraper_merged(path: str) -> list[dict]:
             raw_name = (row.get("name") or "").strip()
             if not brand or not raw_name:
                 continue
-            perfume = _clean_scraped_title(raw_name, brand)
             notes_top = parse_ast_list(row.get("notes.top_notes", ""))
             notes_middle = parse_ast_list(row.get("notes.middle_notes", ""))
             notes_base = parse_ast_list(row.get("notes.base_notes", ""))
+            perfume = _clean_product_title(raw_name, brand)
             rows.append({
                 "brand": brand,
                 "perfume": perfume,
@@ -358,7 +351,7 @@ def load_scraper_merged(path: str) -> list[dict]:
                 "rating": None,
                 "rating_count": None,
                 "real_price_inr": _extract_price_from_listing(row.get("prices", "")),
-                "source": "scraper_merged",
+                "source": "india_mainstream",
             })
     return rows
 
@@ -421,11 +414,8 @@ def extract_perfume_from_name(name: str) -> str:
 # Merge & dedup
 # ---------------------------------------------------------------------------
 def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: bool = False) -> list[dict]:
-    """Load all datasets and merge with dedup. Priority: scraper_merged > nandini
-    > fra_cleaned > fra_perfumes > indian_brands > da_fragrance. scraper_merged
-    is highest priority despite being the smallest source (2.2K rows) because
-    it's one of only two sources with a genuine (not inferred) note pyramid,
-    and the only one with 100% real accord coverage."""
+    """Load all datasets and merge with dedup. Priority: india_mainstream > nandini
+    > fra_cleaned > fra_perfumes > indian_brands > da_fragrance."""
     all_rows = []
 
     # 1. DA_Fragrance (base)
@@ -441,18 +431,17 @@ def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: boo
     all_rows.extend(indian_rows)
     print(f"  -> {len(indian_rows)} rows")
 
-    # Scraper-enriched Indian-brand dataset (local file, no Kaggle download -
-    # available regardless of --da-only, same as indian_brands above)
-    scraper_merged_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "scraper", "data", "processed", "perfume_dataset_merged.csv"
+    # India mainstream dataset (local file, no Kaggle download)
+    india_mainstream_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "data", "india_mainstream_brands.csv"
     )
-    print(f"Loading scraper-enriched dataset from {scraper_merged_path}...")
-    scraper_rows = load_scraper_merged(scraper_merged_path)
-    all_rows.extend(scraper_rows)
-    print(f"  -> {len(scraper_rows)} rows")
+    print(f"Loading India mainstream dataset from {india_mainstream_path}...")
+    mainstream_rows = load_india_mainstream(india_mainstream_path)
+    all_rows.extend(mainstream_rows)
+    print(f"  -> {len(mainstream_rows)} rows")
 
     if da_only:
-        print("  Skipping Fragrantica & Nandini (--da-only)")
+        print("  Skipping extended datasets (--da-only)")
         print(f"\nTotal: {len(all_rows)} rows (no dedup needed for single source)")
         if max_rows and max_rows < len(all_rows):
             all_rows = all_rows[:max_rows]
@@ -462,14 +451,14 @@ def load_all_datasets(da_path: str, max_rows: Optional[int] = None, da_only: boo
     # kagglehub is only needed for the Fragrantica/Nandini sources below
     import kagglehub
 
-    # 2. Fragrantica Perfumes
-    print("Loading Fragrantica Perfumes...")
+    # 2. Fra Perfumes
+    print("Loading Fra Perfumes...")
     fp = os.path.join(kagglehub.dataset_download("olgagmiufana1/fragrantica-com-fragrance-dataset"), "fra_perfumes.csv")
     all_rows.extend(load_fra_perfumes(fp))
     print(f"  -> {len(all_rows)} rows")
 
-    # 3. Fragrantica Cleaned
-    print("Loading Fragrantica Cleaned...")
+    # 3. Fra Cleaned
+    print("Loading Fra Cleaned...")
     fp2 = os.path.join(kagglehub.dataset_download("olgagmiufana1/fragrantica-com-fragrance-dataset"), "fra_cleaned.csv")
     all_rows.extend(load_fra_cleaned(fp2))
     print(f"  -> {len(all_rows)} rows")
@@ -546,9 +535,9 @@ POSITION_WEIGHTS = [1.0, 0.8, 0.6, 0.4, 0.2]
 def compute_longevity_sillage(accords: list[str], notes: list[str]) -> tuple[float, float]:
     """Deterministic heuristic: heavier/denser accords (woody, amber, oud, leather...)
     linger and project more than light ones (citrus, fresh, aquatic...). Weighted by
-    accord prominence (Fragrantica orders main_accords by strength). No ground-truth
-    longevity/sillage data exists in any of the 4 source datasets, so this is derived
-    entirely from the accord vocabulary already used by scenario_map.py."""
+    accord prominence. No ground-truth longevity/sillage data exists in any of the
+    source datasets, so this is derived entirely from the accord vocabulary already
+    used by scenario_map.py."""
     from app.services.scenario_map import LONGEVITY_ACCORD_WEIGHTS, SILLAGE_ACCORD_WEIGHTS, POWER_NOTES
 
     top_accords = (accords or [])[:5]
@@ -578,7 +567,7 @@ def compute_longevity_sillage(accords: list[str], notes: list[str]) -> tuple[flo
 
 def resolve_note_tiers(row: dict) -> tuple[list[str], list[str], list[str]]:
     """Prefer real Top/Middle/Base tags carried through from load_fra_cleaned
-    or load_scraper_merged (row["notes_top"/"notes_middle"/"notes_base"]);
+    or load_curated_merged (row["notes_top"/"notes_middle"/"notes_base"]);
     only run the heuristic classifier (scenario_map.classify_note_tiers) on
     whatever notes in the final merged `notes` union aren't already covered
     by a real tag. This matters for rows assembled from multiple sources
@@ -606,7 +595,7 @@ def normalize_gender(raw: Optional[str]) -> Optional[str]:
     men', 'pour homme', 'Femme'...) to a canonical male/female/unisex/None.
     Word-boundary regex avoids 'men' falsely matching inside 'women'. Also used for
     name-based inference (e.g. 'Adam Levine For Men') when a dataset has no explicit
-    Gender column, since ~4% of Fragrantica perfume names embed a gender qualifier."""
+    Gender column, since ~4% of perfume names embed a gender qualifier."""
     if not raw:
         return None
     r = raw.strip().lower()
@@ -717,7 +706,7 @@ def main():
     parser.add_argument("--cuda", action="store_true", help="Use CUDA if available")
     parser.add_argument("--da-csv", default="../DA_Fragrance_Analysis-main/DA_Fragrance_Analysis-main/Datasets/cleaned_frag_dataset.csv")
     parser.add_argument("--max", type=int, default=None, help="Max perfumes to seed")
-    parser.add_argument("--da-only", action="store_true", help="Skip Fragrantica & Nandini (DA_Fragrance only)")
+    parser.add_argument("--da-only", action="store_true", help="Skip extended datasets (DA_Fragrance only)")
     args = parser.parse_args()
 
     if args.cuda:

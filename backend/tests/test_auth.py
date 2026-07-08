@@ -16,6 +16,7 @@ from starlette.requests import Request
 
 from app.api.auth import hash_key, origin_allowed, require_api_key
 from app.api.dependencies import get_db
+from app.core.metrics import rate_limit_rejections_total
 
 
 class TestOriginAllowed:
@@ -154,6 +155,26 @@ class TestRequireApiKeyUnit:
         with pytest.raises(HTTPException) as exc_info:
             await require_api_key(request, conn=conn)
         assert exc_info.value.status_code == 429
+
+    async def test_rate_limit_exceeded_increments_the_rejection_counter(self):
+        # rate_limit_rejections_total is a process-wide Counter (see
+        # app/core/metrics.py) - delta-based, not an absolute assertion, so
+        # this stays correct regardless of what other tests already
+        # recorded against the same key_type label.
+        scope = {
+            "type": "http",
+            "headers": [(b"x-api-key", b"sk_live_ratelimited_metric")],
+            "client": ("127.0.0.1", 1234),
+        }
+        request = Request(scope)
+        row = _key_row(id=int(uuid.uuid4().int % 1_000_000_000), key_type="secret", rate_limit_per_minute=1)
+        conn = FakeAuthConn(row)
+        before = rate_limit_rejections_total.labels(key_type="secret")._value.get()
+        assert (await require_api_key(request, conn=conn)) is not None
+        with pytest.raises(HTTPException):
+            await require_api_key(request, conn=conn)
+        after = rate_limit_rejections_total.labels(key_type="secret")._value.get()
+        assert after == before + 1
 
 
 class TestHashKey:

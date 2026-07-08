@@ -474,8 +474,8 @@ LONGEVITY_PHRASES = [
     "all-day", "stays long", "longevity", "full day", "long wear", "long lasting scent",
 ]
 
-MALE_HINTS = [r"\bmale\b", r"\bman\b", r"\bmen\b", r"\bboy\b", r"\bguy\b", r"\bhim\b", r"\bhis\b", r"\bhusband\b", r"\bboyfriend\b"]
-FEMALE_HINTS = [r"\bfemale\b", r"\bwoman\b", r"\bwomen\b", r"\bgirl\b", r"\bher\b", r"\bhers\b", r"\bwife\b", r"\bgirlfriend\b"]
+MALE_HINTS = [r"\bmale\b", r"\bman\b", r"\bmen\b", r"\bboy\b", r"\bguy\b", r"\bhim\b", r"\bhis\b", r"\bhusband\b", r"\bboyfriend\b", r"\bmasculine\b", r"\bgentleman\b", r"\bgentlemen\b"]
+FEMALE_HINTS = [r"\bfemale\b", r"\bwoman\b", r"\bwomen\b", r"\bgirl\b", r"\bher\b", r"\bhers\b", r"\bwife\b", r"\bgirlfriend\b", r"\bfeminine\b", r"\blady\b", r"\bladies\b"]
 UNISEX_HINTS = ["unisex", "gender neutral", "gender-neutral", "men and women", "women and men", "for everyone"]
 
 # Accord -> longevity/sillage weight (0-1). Heavier/denser accords linger and project more.
@@ -586,6 +586,8 @@ BUDGET_TEXT_PATTERNS = [
     r"(?:under|within|below|less than)\s*(\d[\d,]*)\s*(?:rupees|rs\.?|inr)\b",
     r"budget\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|rupees)?\s*(\d[\d,]*)",
     r"(?:rs\.?|inr|₹)\s*(\d[\d,]*)\s*budget",
+    r"(?:^|\s|\b)(?:rs\.?|inr|₹|rupees)\s*([1-9]\d{2,4})\b",
+    r"\b([1-9]\d{2,4})\s*(?:rupees|rs\.?|inr)\b",
     # Fallback: no currency marker at all ("perfume under 2000"). Restricted to
     # 3-5 digit numbers (100-99999) specifically so it can't false-positive on
     # the unrelated small numbers "under/less than" modifies elsewhere in this
@@ -688,7 +690,7 @@ def classify_note_tiers(notes: list[str]) -> tuple[list[str], list[str], list[st
     columns existed and are still NULL). Volatile/light families (citrus,
     aquatic, green, fruity) are treated as top notes, heavy/dense families
     (woody, oriental, animalic, earthy) as base notes, everything else
-    (floral, spicy, gourmand) as heart. An approximation, not scraped data."""
+    (floral, spicy, gourmand) as heart. An approximation, not curated data."""
     top, heart, base = [], [], []
     for n in notes or []:
         family = get_note_family(n)
@@ -699,3 +701,41 @@ def classify_note_tiers(notes: list[str]) -> tuple[list[str], list[str], list[st
         else:
             heart.append(n)
     return top, heart, base
+
+
+# Occasion -> (typical hours needed, typical projection) - a smart default,
+# not a question asked of the user. Reasoning mirrors each scenario's own
+# `description`/`vibe` above (e.g. office is "professional, subtle... won't
+# distract" -> light projection; party is "bold, loud, attention-grabbing"
+# -> strong projection), so it stays consistent with the domain reasoning
+# already encoded there rather than inventing a second, disconnected set of
+# assumptions. Deliberately a soft nudge (LONGEVITY_WEIGHT=0.20 and
+# PROJECTION_WEIGHT=0.10 are never the sole deciding factor - see
+# DECISION_ENGINE.md) - filled in only when the user hasn't stated an actual
+# hours/projection preference themselves, explicit signal always wins.
+SCENARIO_PERFORMANCE_DEFAULTS: dict[str, tuple[int, str]] = {
+    "gym": (4, "light"),        # short session, showered off after - doesn't need to survive a full day, and shouldn't overpower a shared space
+    "summer": (5, "light"),     # heat amplifies whatever sillage is already there
+    "winter": (8, "moderate"),  # cold air suppresses diffusion - needs more presence to be noticed at all
+    "monsoon": (5, "light"),    # humidity behaves like summer heat for projection purposes
+    "office": (8, "light"),     # full workday, professional restraint in a shared enclosed space
+    "party": (8, "strong"),     # loud/crowded environment, wants to be noticed, event runs long
+    "date": (8, "moderate"),    # intimate-noticeable, not room-filling; evening events run long
+    "wedding": (10, "strong"),  # celebratory, dressy, all-day/evening event
+    "daily": (6, "moderate"),   # an ordinary day, considerate but not overly restrained
+    "evening": (8, "moderate"), # transitions day to night, a full evening out
+    "spring": (5, "light"),     # light florals suit blooming-season wear
+    "autumn": (7, "moderate"),  # cooler air supports heavier accords lasting and projecting further
+}
+
+
+def infer_performance_from_scenarios(scenarios: list[str] | None) -> tuple[int | None, str | None]:
+    """First matching scenario (in the order they were detected/given) wins -
+    a simple, predictable tie-break for a soft nudge, not a hard requirement
+    worth a more elaborate multi-scenario blending scheme. Returns
+    (None, None) if no detected scenario has a mapped default (e.g. an
+    unrecognized or empty scenario list)."""
+    for s in scenarios or []:
+        if s in SCENARIO_PERFORMANCE_DEFAULTS:
+            return SCENARIO_PERFORMANCE_DEFAULTS[s]
+    return None, None

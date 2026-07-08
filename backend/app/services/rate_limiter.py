@@ -41,7 +41,7 @@ class RateLimiter:
 
 # Keyed by an arbitrary tuple (see app.api.auth: (api_key_id, client_ip) for
 # publishable keys since one publishable key is shared by every real visitor
-# of the frontend - a scraped-key abuser hammering it shouldn't throttle out
+# of the frontend - an exfiltrated-key abuser hammering it shouldn't throttle out
 # every legitimate user sharing that same key - vs. just (api_key_id,) for
 # secret keys, since one partner = one bucket and their IP may legitimately
 # rotate). Guards *creation* of a new bucket only - each bucket's own lock

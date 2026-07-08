@@ -15,17 +15,18 @@ AuraMatch AI uses a comprehensive test suite to ensure the system is stable, mat
 
 ## 2. Test Suite Directory and File Architecture
 
-The backend test suite is located in `backend/tests/` and contains **210 unit and integration tests**:
+The backend test suite is located in `backend/tests/` and contains **287 unit and integration tests**:
 
 ### 2.1 Test File Breakdown
-*   `tests/test_auth.py`: Tests the `require_api_key` dependency (publishable vs. secret key validation, revocation, Origin allowlist enforcement, rate-limit rejection) against a fake connection double, plus an end-to-end wiring test on a throwaway FastAPI app.
+*   `tests/test_auth.py`: Tests the `require_api_key` dependency (publishable vs. secret key validation, revocation, Origin allowlist enforcement, rate-limit rejection, and the `auramatch_rate_limit_rejections_total` metric incrementing on a real 429) against a fake connection double, plus an end-to-end wiring test on a throwaway FastAPI app.
 *   `tests/test_circuit_breaker.py`: Tests the circuit breaker state machine, verifying transitions from `CLOSED` to `OPEN` after repeated errors, and from `OPEN` to `HALF-OPEN` after the timeout expires.
-*   `tests/test_db_repository.py`: Tests database queries, including ANN candidate selection and GIN array exclusions, as well as the accord-tier fallback pipeline.
-*   `tests/test_decision_engine.py`: Verifies match score calculations, dynamic weight rescaling, chemical bridge fits, sillage/longevity scaling, and unisex gender modifiers.
+*   `tests/test_db_repository.py`: Tests database queries, including ANN candidate selection and GIN array exclusions, the accord-tier fallback pipeline, corrupted-notes cleaning (`_clean_notes`, including on the reference-perfume lookup path), the `has_limited_data` flag, and `find_reference_perfume`'s brand-ambiguity guard (`_is_same_brand_group`) against a fake connection double simulating all four lookup tiers.
+*   `tests/test_decision_engine.py`: Verifies match score calculations, dynamic weight rescaling, chemical bridge fits, sillage/longevity scaling, unisex gender modifiers, and the brand/scent-character diversity caps (`cap_per_brand`, `cap_by_scent_character`, including the `limit < max_per_key` backfill-ceiling regression).
 *   `tests/test_ingestion.py`: Tests the Pydantic ingestion contracts, validation logic, case-insensitive normalized duplicate lookups, and source-priority updates.
 *   `tests/test_intent_detector.py`: Tests the conversational intent parser, verifying gender extraction, budget limit checks, sillage keywords, and negation boundaries.
 *   `tests/test_llm_enrichment.py`: Verifies Groq API integration boundaries, mock payloads, and circuit breaker exception handling.
-*   `tests/test_middleware.py`: Verifies HTTP request-logging middleware in isolation.
+*   `tests/test_metrics.py`: Tests the circuit-breaker-state-to-gauge-value mapping (`set_circuit_breaker_gauge`) in `app/core/metrics.py`.
+*   `tests/test_middleware.py`: Verifies HTTP request-logging middleware in isolation, plus the metrics it records - the latency histogram, the failure counter, and that the `route` label uses the matched route's path template (not the resolved path with real values substituted in).
 *   `tests/test_rate_limiter.py`: Tests the token-bucket rate limiter in isolation - token consumption, continuous refill, and a concurrent-race test proving the per-bucket lock prevents over-consumption.
 *   `tests/test_scenario_map.py`: Verifies notes-to-family taxonomy mapping and the note classification parser.
 *   `tests/test_schemas.py`: Tests Pydantic model schemas, verifying validation boundaries.
@@ -65,9 +66,11 @@ e.g.: POST /api/v1/search/context -> 200 (184.3ms)
 
 ---
 
-## 5. Observability Metrics Endpoint Roadmap (Not Yet Built)
+## 5. Observability Metrics Endpoint (`GET /metrics`)
 
-A `/metrics` Prometheus-format endpoint (`prometheus_client`) is the next planned observability step (Phase 2 of the architecture roadmap - see [SYSTEM_ARCHITECTURE.md §6](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/SYSTEM_ARCHITECTURE.md)), not yet implemented. It's deliberately scoped small and concrete - request latency, error rates, DB pool utilization, circuit-breaker state - rather than a full tracing mesh, because a full OpenTelemetry distributed-tracing setup earns its keep across many services/hops, and this system has one backend service today. This metrics endpoint is also the actual prerequisite for ever justifying a caching layer: real numbers are needed before knowing whether there's a latency problem worth caching for at all.
+`GET /metrics` (app/main.py, backed by `app/core/metrics.py`) is a Prometheus-format scrape target - Phase 2 of the architecture roadmap (see [SYSTEM_ARCHITECTURE.md §6](SYSTEM_ARCHITECTURE.md)), now implemented. It's deliberately scoped small and concrete - request latency, error rates, DB pool utilization, circuit-breaker state - rather than a full tracing mesh, because a full OpenTelemetry distributed-tracing setup earns its keep across many services/hops, and this system has one backend service today. This is also the actual prerequisite for ever justifying a caching layer: real numbers are needed before knowing whether there's a latency problem worth caching for at all - the pool-size widening in `db_repository._candidate_pool_size` (up to 1,000 ANN candidates, from an earlier 50/200 cap) is exactly the kind of change this endpoint exists to measure the real-world impact of.
+
+Unauthenticated, same convention as `/health`: a Prometheus scrape target is meant to be polled by infrastructure, not called by product clients, and exposes only aggregate counters/gauges - no user or request-content data.
 
 ```mermaid
 graph TD
@@ -78,14 +81,16 @@ graph TD
     RateLimiter[Rate Limiter] -->|Track Rejections| MetricRateLimit[429s Counter, per key type]
 ```
 
-### Planned Metrics Schema:
-*   `auramatch_http_request_duration_seconds` (Histogram): HTTP request latencies, segmented by route and response status.
-*   `auramatch_http_requests_failed_total` (Counter): request failures, segmented by route.
-*   `auramatch_db_pool_connections_active` (Gauge): active vs idle connection counts in the asyncpg pool.
-*   `auramatch_circuit_breaker_state` (Gauge): the Groq circuit breaker's state (0=CLOSED, 1=OPEN, 2=HALF_OPEN) - already a real, implemented state machine (`app/services/circuit_breaker.py`), just not yet exported as a metric.
-*   `auramatch_rate_limit_rejections_total` (Counter): 429 rejections, segmented by key type (publishable/secret) - the rate limiter (`app/services/rate_limiter.py`) already tracks this internally per-bucket, just not yet exported as a metric.
+### Metrics Schema:
+*   `auramatch_http_request_duration_seconds` (Histogram): HTTP request latencies, labeled by `route` and `status`. Recorded once per request in `request_logging_middleware` (app/main.py) - the one place every request, successful or not, already passes through exactly once. `route` is the matched route's path *template* (e.g. `/api/v1/perfume/{perfume_id}`), read from `request.scope["route"]` after routing has resolved it - never the literal resolved path, which would give every distinct perfume ID its own label series (unbounded cardinality that gets worse forever as the catalog/traffic grows). Falls back to the raw path only for requests that never matched a route at all (a genuine 404 with no route).
+*   `auramatch_http_requests_failed_total` (Counter): requests that raised an unhandled exception, labeled by `route`. Deliberately distinct from a normal 4xx/5xx status in the histogram above - an `HTTPException(404)` or `HTTPException(429)` is an intentional, handled response, not a crash, and doesn't increment this.
+*   `auramatch_db_pool_connections_active` (Gauge, labeled `state="active"|"idle"`): asyncpg pool utilization, read fresh at scrape time (`pool.get_size() - pool.get_idle_size()` / `pool.get_idle_size()`) inside the `/metrics` handler itself - polling once per scrape is simpler and just as accurate as keeping a gauge continuously in sync on every acquire/release.
+*   `auramatch_circuit_breaker_state` (Gauge, labeled `breaker="groq"`): the Groq circuit breaker's state (0=CLOSED, 1=OPEN, 2=HALF_OPEN), read from `llm_enrichment.get_groq_breaker_state()` at scrape time - same real state machine `app/services/circuit_breaker.py` already ran, now exported.
+*   `auramatch_rate_limit_rejections_total` (Counter, labeled `key_type`): incremented in `app/api/auth.py` at the exact point a 429 is raised, so it's always in sync with what a caller actually experienced.
 
-Deliberately **not** planned: a semantic-cache hit-ratio metric. There is no caching layer in this system, and won't be one until the metrics above actually show a latency problem worth solving that way - see the architecture roadmap's "explicitly not planned" list for the full reasoning.
+Deliberately **not** built: a semantic-cache hit-ratio metric. There is no caching layer in this system, and won't be one until the metrics above actually show a latency problem worth solving that way - see the architecture roadmap's "explicitly not planned" list for the full reasoning.
+
+**`/admin` (frontend, `frontend/src/app/admin/page.tsx`)**: a small dashboard that fetches the raw `/metrics` text export and parses it client-side into summary cards (total requests, failed requests, rate-limit rejections, circuit-breaker state) and a per-route latency/status table, plus a collapsible raw-text viewer. It's a consumer of `/metrics`, not a replacement for real Prometheus/Grafana - reachable only by direct URL (not linked from the public nav), matching `/metrics` itself being unauthenticated-but-not-advertised.
 
 ---
 

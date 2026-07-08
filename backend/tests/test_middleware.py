@@ -6,6 +6,7 @@ middleware function directly onto a throwaway FastAPI app instead.
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.core.metrics import http_request_duration_seconds, http_requests_failed_total
 from app.main import app as real_app
 from app.main import request_logging_middleware
 
@@ -22,7 +23,32 @@ def _build_test_app() -> FastAPI:
     async def boom():
         raise RuntimeError("kaboom")
 
+    @app.get("/items/{item_id}")
+    async def get_item(item_id: int):
+        return {"item_id": item_id}
+
     return app
+
+
+def _sample(metric, suffix: str, **labels) -> float:
+    """Reads a metric's current value via the public `collect()` API
+    (`_total`/`_count` suffix included in the sample name itself) rather than
+    reaching into private per-child attributes, which vary across
+    prometheus_client versions. Returns 0.0 if never observed - a metric
+    with no data yet, not an error."""
+    for family in metric.collect():
+        for s in family.samples:
+            if s.name.endswith(suffix) and s.labels == labels:
+                return s.value
+    return 0.0
+
+
+def _counter_value(counter, **labels) -> float:
+    return _sample(counter, "_total", **labels)
+
+
+def _histogram_count(histogram, **labels) -> float:
+    return _sample(histogram, "_count", **labels)
 
 
 class TestRequestLoggingMiddleware:
@@ -43,6 +69,52 @@ class TestRequestLoggingMiddleware:
         client = TestClient(_build_test_app(), raise_server_exceptions=False)
         resp = client.get("/boom")
         assert resp.status_code == 500
+
+
+class TestMiddlewareMetrics:
+    """The metrics module's Counter/Histogram objects are process-wide
+    singletons (app/core/metrics.py), not per-test instances, so every
+    assertion here is a before/after delta - never an absolute count -
+    to stay correct regardless of what other tests already recorded
+    against the same route+status label."""
+
+    def test_successful_request_is_recorded_in_the_latency_histogram(self):
+        client = TestClient(_build_test_app())
+        before = _histogram_count(http_request_duration_seconds, route="/ping", status="200")
+        client.get("/ping")
+        after = _histogram_count(http_request_duration_seconds, route="/ping", status="200")
+        assert after == before + 1
+
+    def test_route_label_uses_the_path_template_not_the_resolved_path(self):
+        # Two different item IDs must collapse into ONE label series
+        # ("/items/{item_id}"), not a distinct series per ID - an
+        # unbounded-cardinality metric that gets worse forever as traffic
+        # grows (see _route_template's own docstring in main.py). Verified
+        # live against the real running app too (curl /api/v1/perfume/1 and
+        # /2 both landed under one "/api/v1/perfume/{perfume_id}" series).
+        client = TestClient(_build_test_app())
+        before = _histogram_count(http_request_duration_seconds, route="/items/{item_id}", status="200")
+        client.get("/items/1")
+        client.get("/items/2")
+        after = _histogram_count(http_request_duration_seconds, route="/items/{item_id}", status="200")
+        assert after == before + 2
+        # Neither literal resolved path should have its own series at all.
+        assert _histogram_count(http_request_duration_seconds, route="/items/1", status="200") == 0.0
+        assert _histogram_count(http_request_duration_seconds, route="/items/2", status="200") == 0.0
+
+    def test_unhandled_exception_increments_the_failure_counter(self):
+        client = TestClient(_build_test_app(), raise_server_exceptions=False)
+        before = _counter_value(http_requests_failed_total, route="/boom")
+        client.get("/boom")
+        after = _counter_value(http_requests_failed_total, route="/boom")
+        assert after == before + 1
+
+    def test_successful_request_does_not_increment_the_failure_counter(self):
+        client = TestClient(_build_test_app())
+        before = _counter_value(http_requests_failed_total, route="/ping")
+        client.get("/ping")
+        after = _counter_value(http_requests_failed_total, route="/ping")
+        assert after == before
 
 
 class TestCorsAllowsApiKeyHeader:

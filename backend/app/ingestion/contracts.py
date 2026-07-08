@@ -1,7 +1,7 @@
 """
 AuraMatch AI - Ingestion Contract
 The one canonical shape any data source (today: 5 batch CSV/Kaggle loaders
-in seed_data.py; later: a scraper run, a partner API feed, or a user
+in seed_data.py; later: a batch import run, a partner API feed, or a user
 submission - "all of the above eventually") must normalize into before it
 touches storage. This is the only place in the app where adapter-style
 decoupling from a specific data source is actually justified right now -

@@ -9,8 +9,8 @@ secret without leaking it to anyone who opens devtools.
   `allowed_origins` (checked against the request's Origin header by
   app.api.auth.require_api_key) - an abuse-deterrent, not a real security
   boundary, since a non-browser caller can set any Origin it likes. The
-  actual point is stopping *other websites* from reusing a scraped
-  publishable key in a browser context (same model as a Google Maps
+   actual point is stopping *other websites* from reusing an exfiltrated
+   publishable key in a browser context (same model as a Google Maps
   browser key).
 - 'secret': for genuine server-to-server third-party integrations. No
   Origin restriction (server callers don't reliably send one), must never

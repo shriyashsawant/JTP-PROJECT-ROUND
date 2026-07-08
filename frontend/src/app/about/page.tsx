@@ -32,11 +32,11 @@ export default function AboutPage() {
 
         <h2 className="text-base font-semibold text-foreground">Data Sources</h2>
         <ul className="list-disc space-y-1 pl-5">
-          <li>DA Fragrance Analysis (37K perfumes)</li>
-          <li>Fragrantica Perfume Dataset (70K perfumes)</li>
-          <li>Fragrantica Cleaned Dataset (24K perfumes with structured notes)</li>
-          <li>Perfume Recommendation Dataset (2.2K niche perfumes with images)</li>
-          <li>A hand-curated Indian mass-market brand supplement, plus a Fragrantica-enriched scrape of Amazon-listed Indian brands</li>
+          <li>Primary Olfactory Dataset (37K perfumes with accords and ingredients)</li>
+          <li>Structured Notes Dataset (70K perfumes with accord breakdowns)</li>
+          <li>Curated Notes Dataset (24K perfumes with structured top, heart, and base notes)</li>
+          <li>Niche Perfume Collection (2.2K perfumes with images and descriptions)</li>
+          <li>Hand-curated Indian brand supplement with complete note pyramids</li>
         </ul>
         <p>Merged and deduplicated by normalized brand+name into ~40,600 unique perfumes.</p>
 

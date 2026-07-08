@@ -6,7 +6,7 @@ from app.api.dependencies import get_db
 from app.core.config import settings
 from app.models.schemas import ContextSearchRequest, HealthResponse, PerfumeResponse
 from app.services.db_repository import check_health, find_reference_perfume, search_by_context
-from app.services.decision_engine import apply_price_order, cap_per_brand
+from app.services.decision_engine import apply_price_order, cap_by_scent_character, cap_per_brand
 from app.services.intent_detector import (
     detect_budget_from_text,
     detect_dupe_intent,
@@ -19,6 +19,7 @@ from app.services.intent_detector import (
 )
 from app.services.llm_enrichment import enhance_with_llm
 from app.services.ml_engine import build_context_query
+from app.services.scenario_map import infer_performance_from_scenarios
 
 router = APIRouter(prefix="/api/v1", tags=["Search"])
 
@@ -56,6 +57,18 @@ async def context_search(
     hours_required = req.hours_required or detect_longevity_hours_required(req.query)
     longevity_requested = detect_longevity_intent(req.query) or bool(hours_required)
     projection_preference = req.projection_preference or detect_projection_preference(req.query)
+    # Neither is ever asked of the user directly - an occasion already implies
+    # a typical wear duration and projection strength (see
+    # scenario_map.SCENARIO_PERFORMANCE_DEFAULTS), so only fill in whichever
+    # of these the user hasn't actually stated themselves; explicit signal
+    # (the request field or a real phrase in the query) always wins.
+    if not hours_required or not projection_preference:
+        inferred_hours, inferred_projection = infer_performance_from_scenarios(scenarios)
+        if not hours_required and inferred_hours:
+            hours_required = inferred_hours
+            longevity_requested = True
+        if not projection_preference and inferred_projection:
+            projection_preference = inferred_projection
     dupe_intent = detect_dupe_intent(req.query)
     negated_terms = detect_negated_terms(req.query)
 
@@ -141,6 +154,36 @@ async def context_search(
     # let an over-represented brand climb right back up before the LLM ever
     # sees it, defeating the point.
     results = cap_per_brand(results, fetch_limit, backfill=False)
+    # Same reasoning, one dimension further: brand-capping alone still lets
+    # N near-identical "citrus aromatic" results from N *different* brands
+    # read as one undifferentiated cluster - a user who wanted variety in
+    # scent character, not just label. Applied here (the wide pool, strict,
+    # no backfill) rather than at the final cap_per_brand(req.limit) below,
+    # so the LLM and the final selection both draw from an already
+    # character-diversified pool instead of stacking a second constraint on
+    # an already-truncated final slice.
+    #
+    # Skipped entirely when this is a dupe/reference-grounded search
+    # (`reference` set - see the dupe-intent block above): the whole point of
+    # "cheaper alternative to Bleu de Chanel" is finding perfumes that DO
+    # share the reference's scent character - that's what makes them good
+    # dupes. Enforcing character diversity here would actively penalize
+    # genuinely strong matches for being *too similar* to what the user
+    # explicitly asked to match, which is exactly backwards for this case.
+    #
+    # `pre_diversity_results` keeps the pool as it stood right before this
+    # strict (backfill=False) cut - real bug this guards against: strictly
+    # capping a scent-homogeneous wide pool (e.g. a query whose ANN
+    # neighborhood is mostly "woody") can shrink `results` well below
+    # `req.limit` with no way back, since a strict cut permanently discards
+    # candidates rather than reordering them. Both branches below backfill
+    # any shortfall from this wider, pre-cut pool - same remainder pattern
+    # already used for the LLM's own shortfall, just also sourced here for
+    # the no-LLM path, which previously had no backfill-from-original-pool
+    # step at all for this specific cut.
+    pre_diversity_results = results
+    if not reference:
+        results = cap_by_scent_character(results, fetch_limit, backfill=False)
 
     if llm_enabled:
         llm_pick_count = min(req.limit, llm_pool_cap)
@@ -160,10 +203,15 @@ async def context_search(
                 # deterministic pool (already ranked, already brand-capped),
                 # not re-run through the LLM.
                 seen_ids = {r["id"] for r in final}
-                remainder = [r for r in results if r["id"] not in seen_ids]
+                remainder = [r for r in pre_diversity_results if r["id"] not in seen_ids]
                 final = final + cap_per_brand(remainder, req.limit - len(final))
             return final
-    return cap_per_brand(results, req.limit)
+    final = cap_per_brand(results, req.limit)
+    if len(final) < req.limit:
+        seen_ids = {r["id"] for r in final}
+        remainder = [r for r in pre_diversity_results if r["id"] not in seen_ids]
+        final = final + cap_per_brand(remainder, req.limit - len(final))
+    return final
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(conn: Connection = Depends(get_db)):

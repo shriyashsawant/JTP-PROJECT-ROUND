@@ -6,7 +6,7 @@ This module enforces softer *business* rules (price positivity, rating
 range, blank-but-technically-valid-string entries) and reports them as a
 list of human-readable issues rather than raising - today's curated
 CSV/Kaggle sources are trustworthy enough that this never fires, but
-once live sources (scraping, a partner API, user submissions) start
+once live sources (batch imports, a partner API, user submissions) start
 landing with much less pre-validated data, these same functions become
 the actual gate, and the (record, errors) shape is what a future admin
 review UI (Phase 5 of the architecture roadmap) would surface to a human

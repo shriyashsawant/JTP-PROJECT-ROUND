@@ -29,7 +29,7 @@ async def upsert_perfume(
     `source_priority` columns (migration 0002_ingestion_columns) so it holds
     for a live, one-row-at-a-time upsert too, not just a single batch run.
     A lower-priority incoming record is silently skipped (not an error -
-    this is the expected, common case for a stale re-scrape).
+     this is the expected, common case for a stale re-import).
 
     Matches first on the exact (brand, perfume) unique constraint (fewest
     false merges), falling back to the normalized_key index (migration

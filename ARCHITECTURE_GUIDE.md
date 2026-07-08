@@ -1,6 +1,6 @@
 # Perfume Suggestion Platform — Architecture & Implementation Guide
 
-> **⚠️ Historical planning document.** This was written before implementation began and describes the *original plan* (e.g. an Nginx reverse proxy, a `scent_net` network) - not all of it matches the system as actually built. For accurate, verified documentation of the current system, see **[documentation/README.md](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/README.md)**. Kept here for provenance - it shows the original design thinking this project started from.
+> **⚠️ Historical planning document.** This was written before implementation began and describes the *original plan* (e.g. an Nginx reverse proxy, a `scent_net` network) - not all of it matches the system as actually built. For accurate, verified documentation of the current system, see **[documentation/README.md](documentation/README.md)**. Kept here for provenance - it shows the original design thinking this project started from.
 
 > **Project**: AuraMatch AI — AI-Powered Fragrance Recommendation Engine  
 > **Deadline**: July 8, 2026  
@@ -154,9 +154,9 @@ perfume-suggestion-platform/
 Two core datasets are already cleaned and ready:
 
 | Dataset | Rows | Key Columns | Source |
-|---|---|---|---|
-| `cleaned_frag_dataset.csv` | ~38K | brand, perfume, launch_year, main_accords, notes | Fragrantica (scraped) |
-| `mens_sales_cleaned_dataset.csv` | ~1K | brand, title, type, price, sold | eBay (Kaggle) |
+|---|---|---|---|---|
+| `cleaned_frag_dataset.csv` | ~38K | brand, perfume, launch_year, main_accords, notes | Primary olfactory dataset |
+| `mens_sales_cleaned_dataset.csv` | ~1K | brand, title, type, price, sold | Public sales data |
 
 **Indian Market Adaptation** — The dataset prices (in USD) need conversion to INR. Add Indian-specific data:
 - **Indian perfume brands**: Engage, Wild Stone, Fogg, Park Avenue, Bella Vita, Skinn by Titan, The Man Company, Ustraa, Bombay Perfumery, Ajmal, Al-Rehab, Neesh

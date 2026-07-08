@@ -6,7 +6,7 @@ from app.api.dependencies import get_db
 from app.core.config import settings
 from app.models.schemas import BudgetSearchRequest, PerfumeDetailResponse, PerfumeResponse
 from app.services.db_repository import find_reference_perfume, get_perfume_by_id, search_by_budget
-from app.services.decision_engine import apply_price_order, cap_per_brand
+from app.services.decision_engine import apply_price_order, cap_by_scent_character, cap_per_brand
 from app.services.intent_detector import (
     detect_budget_from_text,
     detect_gender,
@@ -18,6 +18,7 @@ from app.services.intent_detector import (
 )
 from app.services.llm_enrichment import enhance_with_llm
 from app.services.ml_engine import build_budget_query
+from app.services.scenario_map import infer_performance_from_scenarios
 
 router = APIRouter(prefix="/api/v1", tags=["Dupe Engine"])
 
@@ -72,6 +73,16 @@ async def dupe_search(
     hours_required = req.hours_required or detect_longevity_hours_required(req.query)
     longevity_requested = detect_longevity_intent(req.query) or bool(hours_required)
     projection_preference = req.projection_preference or detect_projection_preference(req.query)
+    # See routes_search.py's identical block for the full reasoning - an
+    # occasion implies a typical wear duration/projection, filled in only
+    # when the user hasn't stated either themselves.
+    if not hours_required or not projection_preference:
+        inferred_hours, inferred_projection = infer_performance_from_scenarios(scenarios)
+        if not hours_required and inferred_hours:
+            hours_required = inferred_hours
+            longevity_requested = True
+        if not projection_preference and inferred_projection:
+            projection_preference = inferred_projection
     negated_terms = detect_negated_terms(req.query)
 
     enriched = build_budget_query(
@@ -113,6 +124,19 @@ async def dupe_search(
     # cap_per_brand's docstring for why relaxing/backfilling at this stage
     # (against the large fetch_limit) would defeat the point.
     results = cap_per_brand(results, fetch_limit, backfill=False)
+    # Same as routes_search.py's equivalent block: skipped when `reference`
+    # resolved (a real "cheaper alternative to X" should cluster around X's
+    # own scent character), applied when it didn't (an unrecognized
+    # reference name with an explicit budget still reaches this point - see
+    # the 422 condition above, which only fires when *both* budget and
+    # reference are missing). `pre_diversity_results` preserves the
+    # pre-cut pool so a scent-homogeneous wide pool can't strictly shrink
+    # `results` below `req.limit` with no way back - both return paths below
+    # backfill any shortfall from it, same remainder pattern already used
+    # for the LLM's own shortfall.
+    pre_diversity_results = results
+    if not reference:
+        results = cap_by_scent_character(results, fetch_limit, backfill=False)
 
     if llm_enabled:
         llm_pick_count = min(req.limit, llm_pool_cap)
@@ -129,10 +153,15 @@ async def dupe_search(
                 # fill the remainder from the wider deterministic pool
                 # directly, not re-run through the LLM.
                 seen_ids = {r["id"] for r in final}
-                remainder = [r for r in results if r["id"] not in seen_ids]
+                remainder = [r for r in pre_diversity_results if r["id"] not in seen_ids]
                 final = final + cap_per_brand(remainder, req.limit - len(final))
             return final
-    return cap_per_brand(results, req.limit)
+    final = cap_per_brand(results, req.limit)
+    if len(final) < req.limit:
+        seen_ids = {r["id"] for r in final}
+        remainder = [r for r in pre_diversity_results if r["id"] not in seen_ids]
+        final = final + cap_per_brand(remainder, req.limit - len(final))
+    return final
 
 @router.get("/perfume/{perfume_id}", response_model=PerfumeDetailResponse)
 async def get_perfume(

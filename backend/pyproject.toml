@@ -19,7 +19,7 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 check_untyped_defs = true
-exclude = ["seed_data.py", "scraper/", "tests/"]
+exclude = ["seed_data.py", "tests/"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

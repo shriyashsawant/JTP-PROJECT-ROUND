@@ -9,6 +9,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import LimitedDataNotice from "@/components/LimitedDataNotice";
 import { getPerfumeById } from "@/lib/api";
 import { getAccordGradient, openAmazonSearch } from "@/lib/utils";
 import type { PerfumeDetail } from "@/lib/api";
@@ -199,6 +200,11 @@ export default function PerfumeDetailPage() {
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Scent Pyramid
           </h2>
+          {perfume.has_limited_data && (
+            <LimitedDataNotice className="mt-1 text-xs" iconSize={12}>
+              No verified note data for this fragrance - pyramid inferred from its accords
+            </LimitedDataNotice>
+          )}
           <div className="mt-3 space-y-4">
             {perfume.top_notes.length > 0 && (
               <div>

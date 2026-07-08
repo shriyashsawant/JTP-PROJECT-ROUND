@@ -151,7 +151,7 @@ class TestUpsertPerfume:
             "price_inr": 1500, "source": "da_fragrance", "source_priority": 1,
             "normalized_key": "dior|sauvage",
         }])
-        record = _record(real_price_inr=3000, source="scraper_merged", source_priority=5)
+        record = _record(real_price_inr=3000, source="curated_merged", source_priority=5)
         await upsert_perfume(conn, record, "[0.1]", 50.0, 50.0)
         assert len(conn.rows) == 1  # updated in place, not duplicated
         assert conn.rows[0]["price_inr"] == 3000
@@ -160,7 +160,7 @@ class TestUpsertPerfume:
     async def test_lower_priority_source_does_not_overwrite(self):
         conn = FakeConn(initial_rows=[{
             "id": 1, "brand": "Dior", "perfume": "Sauvage",
-            "price_inr": 5000, "source": "scraper_merged", "source_priority": 5,
+            "price_inr": 5000, "source": "curated_merged", "source_priority": 5,
             "normalized_key": "dior|sauvage",
         }])
         record = _record(real_price_inr=999, source="da_fragrance", source_priority=1)
@@ -197,7 +197,7 @@ class TestUpsertPerfume:
         ])
         record = _record(
             brand="Acqua di Parma", perfume="Colonia Club Deluxe",
-            real_price_inr=5000, source="scraper_merged", source_priority=5,
+            real_price_inr=5000, source="curated_merged", source_priority=5,
         )
         await upsert_perfume(conn, record, "[0.1]", 50.0, 50.0)
         # Neither existing row was touched; a new row was inserted instead.

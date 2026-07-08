@@ -14,22 +14,29 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
+# Anchored to the repo root (leading /) - Python packaging-artifact dir
+# names like "lib" are common, ordinary directory names in JS/TS projects
+# too. An unanchored `lib/` here previously matched frontend/src/lib/ as
+# well as any Python build/ dist/ output, silently keeping api.ts and
+# utils.ts out of git entirely (confirmed via `git log` showing zero
+# history for either file) - a fresh clone would be missing files nearly
+# every frontend page imports, and the frontend Docker build would fail.
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
 .eggs/
-lib/
-lib64/
-parts/
+/lib/
+/lib64/
+/parts/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-sdist/
-var/
-wheels/
-share/python-wheels/
+/sdist/
+/var/
+/wheels/
+/share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -42,7 +49,6 @@ yarn-error.log
 yarn.log
 .next/
 out/
-build/
 
 # OS Files
 .DS_Store
@@ -56,6 +62,7 @@ Thumbs.db
 # Database / Large Data
 backend/data/*.csv
 !backend/data/indian_brands.csv
+!backend/data/india_mainstream_brands.csv
 backend/data/*.json
 backend/data/*.sqlite
 _last_query_vectors.json
@@ -84,9 +91,5 @@ DA_Fragrance_Analysis-main/
 *.swp
 *.swo
 
-# Scraper data folders (except processed merge csv) and logs
-backend/scraper/data/*
-!backend/scraper/data/processed/
-backend/scraper/data/processed/*
-!backend/scraper/data/processed/perfume_dataset_merged.csv
-backend/scraper/logs/
+# Local data sources
+backend/data_sources_local/

@@ -5,6 +5,7 @@ from app.services.scenario_map import (
     estimate_hours_numeric,
     estimate_wear_hours,
     get_note_family,
+    infer_performance_from_scenarios,
     sillage_label,
 )
 
@@ -106,3 +107,46 @@ class TestSillageLabel:
 
     def test_strong(self):
         assert sillage_label(90) == "strong"
+
+
+class TestInferPerformanceFromScenarios:
+    def test_none_scenarios_returns_none_none(self):
+        assert infer_performance_from_scenarios(None) == (None, None)
+
+    def test_empty_list_returns_none_none(self):
+        assert infer_performance_from_scenarios([]) == (None, None)
+
+    def test_unrecognized_scenario_returns_none_none(self):
+        assert infer_performance_from_scenarios(["not-a-real-scenario"]) == (None, None)
+
+    def test_gym_infers_short_light(self):
+        hours, projection = infer_performance_from_scenarios(["gym"])
+        assert hours == 4
+        assert projection == "light"
+
+    def test_office_infers_long_light(self):
+        hours, projection = infer_performance_from_scenarios(["office"])
+        assert hours == 8
+        assert projection == "light"
+
+    def test_party_infers_long_strong(self):
+        hours, projection = infer_performance_from_scenarios(["party"])
+        assert hours == 8
+        assert projection == "strong"
+
+    def test_wedding_infers_longest_strong(self):
+        hours, projection = infer_performance_from_scenarios(["wedding"])
+        assert hours == 10
+        assert projection == "strong"
+
+    def test_first_matching_scenario_wins_over_later_ones(self):
+        # "office" (light, 8h) should win over "party" (strong, 8h) since it
+        # appears first - a simple, predictable tie-break, not a blend.
+        hours, projection = infer_performance_from_scenarios(["office", "party"])
+        assert hours == 8
+        assert projection == "light"
+
+    def test_unrecognized_entries_are_skipped_to_find_a_real_match(self):
+        hours, projection = infer_performance_from_scenarios(["not-real", "gym"])
+        assert hours == 4
+        assert projection == "light"

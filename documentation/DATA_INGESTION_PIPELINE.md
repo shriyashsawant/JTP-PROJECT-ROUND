@@ -6,10 +6,10 @@ This document details the database migration patterns, quality validation bounda
 
 ## 1. Algorithmic Overview and Data Integrity Challenges
 
-AuraMatch AI has evolved from a statically seeded project into a system built to ingest data from diverse, live sources (including batch scrapers, partner API feeds, and user submissions). This transition introduces several key data integrity challenges:
+AuraMatch AI has evolved from a statically seeded project into a system built to ingest data from diverse, live sources (including batch imports, partner API feeds, and user submissions). This transition introduces several key data integrity challenges:
 *   **Schema Evolution**: Schema modifications must be applied to live, active databases without destroying user accounts, transaction histories, or existing data.
 *   **Duplicate Detection**: Minor variations in casing, spacing, and punctuation (e.g. "Dior" vs "DIOR ") must be resolved to a single logical record.
-*   **Data Corruption**: Ingestion pipelines must prevent low-quality, automated scrapers or unverified CSV uploads from overwriting curated datasets.
+*   **Data Corruption**: Ingestion pipelines must prevent low-quality, automated imports or unverified CSV uploads from overwriting curated datasets.
 *   **Reseeding Latency**: Generating vector embeddings for 40K+ rows takes hours. Ingestion pipelines must support incremental updates (only re-embedding when text-affecting fields actually change).
 
 ---
@@ -72,11 +72,11 @@ To prevent updates from being silently ignored or curated data from being corrup
 
 ### 4.1 Ingestion Source Hierarchy
 Each ingestion source is assigned a priority score (`seed_data.SOURCE_PRIORITY`, shared by the batch dedup pass and the persisted `source_priority` column so both agree on the same ordering):
-*   `scraper_merged` (Priority 5): our own Fragrantica-enriched scrape - the only source with 100% real accord coverage and a genuine (not inferred) note pyramid.
+*   `curated_merged` (Priority 5): our own enriched dataset - the only source with 100% real accord coverage and a genuine (not inferred) note pyramid.
 *   `nandini` (Priority 4): niche perfumes with rich descriptions and images.
-*   `fra_cleaned` (Priority 3): cleaned Fragrantica dataset with real per-tier note tags.
-*   `fra_perfumes` (Priority 2): the larger, less structured Fragrantica dataset.
-*   `da_fragrance` (Priority 1): the base DA_Fragrance_Analysis dataset.
+*   `fra_cleaned` (Priority 3): curated notes dataset with real per-tier note tags.
+*   `fra_perfumes` (Priority 2): the larger, broader notes dataset.
+*   `da_fragrance` (Priority 1): the base olfactory dataset.
 *   `indian_brands` and any other/unrecognized source (Priority 0, the `SOURCE_PRIORITY.get(source, 0)` default): the hand-curated Indian mass-market supplement, and legacy rows backfilled to `source='legacy_seed'` by migration `0002_ingestion_columns`.
 
 ### 4.2 Duplicate Matching Workflow
@@ -124,5 +124,5 @@ Schema migrations on live databases carry risk. To mitigate this, database backu
 ## 6. Scope of Ingestion Scaling and Future Expansion
 
 The ingestion pipeline is designed to support further scaling as ingestion volume increases:
-*   **Asynchronous Message Queues**: Transitioning the batch ingestion loops to Celery tasks backed by RabbitMQ or Redis. This decouples file uploads or scraping triggers from the main web server processes.
+*   **Asynchronous Message Queues**: Transitioning the batch ingestion loops to Celery tasks backed by RabbitMQ or Redis. This decouples file uploads or import triggers from the main web server processes.
 *   **Automatic Quality Scoring**: Incorporating a data quality rating on incoming records based on the completeness of their note pyramids, description attributes, and image resolution, adjusting priorities dynamically before write operations.

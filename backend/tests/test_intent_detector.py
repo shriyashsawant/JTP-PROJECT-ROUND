@@ -38,6 +38,18 @@ class TestDetectGender:
     def test_no_hint_is_none(self):
         assert detect_gender("fresh citrus scent") is None
 
+    def test_masculine_hint(self):
+        assert detect_gender("a masculine fresh scent") == "male"
+
+    def test_gentleman_hint(self):
+        assert detect_gender("fragrance for gentlemen") == "male"
+
+    def test_feminine_hint(self):
+        assert detect_gender("sweet feminine scent") == "female"
+
+    def test_lady_hint(self):
+        assert detect_gender("elegant perfume for a lady") == "female"
+
     def test_empty_query_is_none(self):
         assert detect_gender("") is None
 
@@ -86,6 +98,16 @@ class TestDetectBudgetFromText:
 
     def test_budget_keyword(self):
         assert detect_budget_from_text("my budget is 1500") == 1500.0
+
+    def test_bare_currency_prefix(self):
+        assert detect_budget_from_text("aquatic perfume ₹1500") == 1500.0
+
+    def test_bare_currency_suffix(self):
+        assert detect_budget_from_text("sauvage alternative 1000 INR") == 1000.0
+
+    def test_bare_currency_in_other_context(self):
+        # A bare currency mention (e.g. ₹40000) is extracted as a budget ceiling.
+        assert detect_budget_from_text("gift for my ₹40000 anniversary") == 40000.0
 
     def test_no_budget_mentioned(self):
         assert detect_budget_from_text("fresh citrus scent") is None

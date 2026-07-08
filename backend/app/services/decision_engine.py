@@ -5,6 +5,7 @@ Modular: swap `scorer` and `explainer` with an LLM later (just implement the sam
 """
 import random
 import re
+from collections.abc import Callable
 
 from app.services.scenario_map import (
     AGE_BRACKET_ACCORDS,
@@ -36,7 +37,7 @@ PROJECTION_WEIGHT = 0.10
 NOTE_FAMILY_WEIGHT = 0.15
 BRIDGE_WEIGHT = 0.15
 PRICE_WEIGHT = 0.05
-GENDER_WEIGHT = 0.05
+GENDER_WEIGHT = 0.08
 AGE_WEIGHT = 0.05
 
 # Scenarios/note families that signal the user wants a fresh, volatile-top
@@ -853,6 +854,8 @@ def _build_breakdown(
     note_family_fit: float = 1.0,
     has_bridge: bool = False,
     bridge_fit: float = 1.0,
+    age: int | None = None,
+    age_fit: float = 1.0,
 ) -> list[dict]:
     """Only lists criteria the user actually signalled - matches the 'why it
     scored highly' checklist, not every possible scoring dimension."""
@@ -879,6 +882,11 @@ def _build_breakdown(
         items.append({"label": f"{projection_preference.title()} projection", "status": _breakdown_status(projection_fit)})
     if gender:
         items.append({"label": f"Gender: {gender}", "status": "met" if gender_matched else _breakdown_status(gender_fit, 0.9, 0.5)})
+    if age is not None:
+        # age_fit is floored at 0.6 (see _age_fit - a population-level nudge,
+        # never a hard rule), so "met"/"partial" thresholds sit above that
+        # floor rather than reusing the default (0.85/0.5) scale.
+        items.append({"label": f"Age-appropriate profile ({age})", "status": _breakdown_status(age_fit, 0.9, 0.65)})
     if budget:
         items.append({"label": f"Within ₹{budget:,.0f} budget", "status": "met" if (price_inr and price_inr <= budget) else "unmet"})
     return items
@@ -925,6 +933,18 @@ def rank_and_explain(
     (ANN similarity + the SQL price/exclude filters), and breaks ties between
     same/similar-priced results. With no budget, there's no price ceiling to
     be "near" or "under", so it falls back to pure match_score ranking.
+
+    Two-phase deliberately: `results` here is the full ANN candidate pool,
+    which db_repository._candidate_pool_size now widens to as much as 1,000
+    rows (up from an earlier 50-200 cap) so the correctly low-weighted vector-
+    similarity signal has a real field to be out-competed on. Phase 1 below
+    scores every one of those rows - cheap, numeric-only work. Phase 2 (the
+    natural-language `_build_breakdown`/`generate_explanation` calls - regex
+    note/accord matching, template selection, string building) only runs on
+    the post-sort, post-truncation slice that's actually returned to a
+    client. Running phase 2 on the full pool would have multiplied its cost
+    5-20x for candidates guaranteed to be discarded before this function even
+    returns.
     """
     query_terms = query.lower().split()
     scenario_labels = [SCENARIO_MAP[s]["label"] for s in (scenarios or []) if s in SCENARIO_MAP]
@@ -1005,41 +1025,62 @@ def rank_and_explain(
         r["estimated_wear_hours"] = estimate_wear_hours(longevity_score)
         r["projection_label"] = sillage_label(sillage_score)
         r["best_for"] = scenario_labels
+        # Stashed for phase 2 below - everything a candidate's breakdown/
+        # explanation needs that isn't already sitting on `r` itself or in
+        # this function's own outer-scope variables (query/scenarios/budget/
+        # etc, which phase 2 can read directly since it's the same call).
+        r["_explain_ctx"] = {
+            "scenario_fit": scenario_fit, "note_match": note_match,
+            "longevity_fit": longevity_fit, "projection_fit": projection_fit,
+            "gender_matched": gender_matched, "gender_fit": gender_fit,
+            "identity_label": identity_label, "negated_hit": negated_hit,
+            "note_family_fit": note_family_fit, "bridge_fit": bridge_fit,
+            "longevity_score": longevity_score, "sillage_score": sillage_score,
+            "age_fit": age_fit,
+        }
+
+    apply_price_order(results, budget, deal_breaker, score_key="_raw_score")
+    for r in results:
+        r.pop("_raw_score", None)
+    truncated = results[:limit] if limit else results
+
+    # Phase 2: natural-language explanation/breakdown, only for the slice
+    # that's actually returned - see this function's docstring.
+    for r in truncated:
+        ctx = r.pop("_explain_ctx")
         r["match_breakdown"] = _build_breakdown(
-            scenario_labels, scenario_fit, note_match,
-            longevity_requested, hours_required, longevity_fit,
-            projection_preference, projection_fit,
-            gender, gender_matched, gender_fit,
-            price, budget, identity_label, has_reference, negated_hit,
-            note_families, note_family_fit, has_bridge, bridge_fit,
+            scenario_labels, ctx["scenario_fit"], ctx["note_match"],
+            longevity_requested, hours_required, ctx["longevity_fit"],
+            projection_preference, ctx["projection_fit"],
+            gender, ctx["gender_matched"], ctx["gender_fit"],
+            r.get("price_inr"), budget, ctx["identity_label"], has_reference, ctx["negated_hit"],
+            note_families, ctx["note_family_fit"], has_bridge, ctx["bridge_fit"],
+            age, ctx["age_fit"],
         )
         r["explanation"] = generate_explanation(
             perfume_name=r.get("perfume", ""),
             brand=r.get("brand", ""),
             match_score=r["match_score"],
-            perfume_notes=perfume_notes,
-            perfume_accords=perfume_accords,
+            perfume_notes=r.get("notes", []),
+            perfume_accords=r.get("main_accords", []),
             query=query,
             scenarios=scenarios,
             skin_type=skin_type,
             budget=budget,
-            price_inr=price,
-            gender_matched=gender_matched,
+            price_inr=r.get("price_inr"),
+            gender_matched=ctx["gender_matched"],
             longevity_requested=longevity_requested,
             hours_required=hours_required,
-            longevity_score=longevity_score,
-            longevity_fit=longevity_fit,
+            longevity_score=ctx["longevity_score"],
+            longevity_fit=ctx["longevity_fit"],
             projection_preference=projection_preference,
-            projection_fit=projection_fit,
-            sillage_score=sillage_score,
-            scenario_fit=scenario_fit,
-            identity_label=identity_label,
+            projection_fit=ctx["projection_fit"],
+            sillage_score=ctx["sillage_score"],
+            scenario_fit=ctx["scenario_fit"],
+            identity_label=ctx["identity_label"],
         )
 
-    apply_price_order(results, budget, deal_breaker, score_key="_raw_score")
-    for r in results:
-        r.pop("_raw_score", None)
-    return results[:limit] if limit else results
+    return truncated
 
 
 def apply_price_order(
@@ -1100,27 +1141,95 @@ def cap_per_brand(results: list[dict], limit: int, max_per_brand: int = 2, backf
     results: once (strict) on the wide pool before the optional LLM ever
     sees it, and once more (with backfill) on whatever comes back - from the
     LLM or the deterministic path alike - so the guarantee holds unconditionally,
-    not only when Groq happens to be configured and cooperative."""
+    not only when Groq happens to be configured and cooperative.
+
+    `max_cap` must never be lower than the starting `cap` (`max_per_brand`) -
+    real bug this shipped with: when `backfill=True` and `limit` is smaller
+    than `max_per_brand` (e.g. `limit=1`, the default `max_per_brand=2` - a
+    real, reachable case: `req.limit=1` is a valid value under both search
+    schemas' `ge=1` bound, and the LLM-enabled path computes exactly this via
+    `llm_pick_count = min(req.limit, llm_pool_cap)`), `max_cap` was set to
+    `limit` itself (1), which is BELOW the starting `cap` (2) - so the while
+    loop's own entry condition (`cap <= max_cap`) failed before a single
+    iteration ran, silently returning an empty list regardless of how many
+    valid results were passed in. Confirmed live: `POST /search/dupe` with
+    `limit: 1` returned `[]` over HTTP while `limit: 2` through `limit: 5`
+    all returned real results - not caught by any existing unit test, all of
+    which used `limit >= max_per_brand`. `max(limit, max_per_brand)` keeps
+    every existing case identical (limit is normally >= max_per_brand) while
+    guaranteeing the first, strictest pass always gets to run at least once.
+
+    The key is lowercased - confirmed live against the real catalog:
+    "Le Labo" and "le labo" both exist as literal, distinct brand strings on
+    real rows (a genuine data-casing inconsistency, not a typo isolated to
+    one row), which a case-sensitive key previously counted as two different
+    brands entirely - defeating the cap for exactly the brand it was most
+    likely to matter for (a query where the same real house shows up under
+    both castings)."""
+    return _cap_by_key(results, limit, key_fn=lambda r: r.get("brand", "").lower(), max_per_key=max_per_brand, backfill=backfill)
+
+
+def _cap_by_key(
+    results: list[dict], limit: int, key_fn: Callable[[dict], str], max_per_key: int, backfill: bool,
+) -> list[dict]:
+    """The actual backfill-aware capping algorithm, extracted so cap_per_brand
+    and cap_by_scent_character (below) share one implementation instead of
+    two copies of a subtle loop that has already shipped two real bugs (see
+    cap_per_brand's own docstring) - a second, independently-maintained copy
+    would double the surface either one could silently drift out of sync on.
+    `key_fn` extracts whatever should be capped from a result dict; see
+    cap_per_brand's docstring for what every parameter means and why.
+
+    `key_counts` is maintained incrementally (initialized once, incremented
+    exactly once per append) rather than rebuilt from scratch by rescanning
+    all of `output` at the top of every cap-relaxation iteration - `output`
+    only ever grows, so a from-scratch rebuild was always redundant with
+    what the running counts already reflected. This turns the per-iteration
+    cost from O(len(output) + len(results)) into O(len(results))."""
     output: list[dict] = []
     added = [False] * len(results)
-    cap = max_per_brand
-    max_cap = limit if backfill else max_per_brand
+    key_counts: dict[str, int] = {}
+    cap = max_per_key
+    max_cap = max(limit, max_per_key) if backfill else max_per_key
     while len(output) < limit and cap <= max_cap:
-        brand_counts: dict[str, int] = {}
-        for r in output:
-            brand_counts[r.get("brand", "")] = brand_counts.get(r.get("brand", ""), 0) + 1
         progressed = False
         for i, r in enumerate(results):
             if added[i] or len(output) >= limit:
                 continue
-            brand = r.get("brand", "")
-            if brand_counts.get(brand, 0) < cap:
+            key = key_fn(r)
+            if key_counts.get(key, 0) < cap:
                 output.append(r)
                 added[i] = True
-                brand_counts[brand] = brand_counts.get(brand, 0) + 1
+                key_counts[key] = key_counts.get(key, 0) + 1
                 progressed = True
         if not backfill:
             break
         if not progressed:
             cap += 1
     return output[:limit]
+
+
+def _dominant_accord(r: dict) -> str:
+    """Best-effort scent-character cluster key: a perfume's first-listed
+    main_accord, lowercased. Fragrantica-style accord lists are ordered by
+    relative prominence, so main_accords[0] is the closest single-value
+    proxy for "what this perfume smells most like" already present on every
+    row - not a curated classification, and not always a guarantee of true
+    ordering across every ingestion source, just the cheapest real signal
+    available without introducing a second taxonomy to maintain."""
+    accords = r.get("main_accords") or []
+    return accords[0].lower() if accords else ""
+
+
+def cap_by_scent_character(results: list[dict], limit: int, max_per_accord: int = 3, backfill: bool = True) -> list[dict]:
+    """Same backfill-aware capping as cap_per_brand, clustered by dominant
+    scent accord instead of brand. cap_per_brand alone still lets N
+    near-identical "citrus aromatic" results from N *different* brands read
+    as one undifferentiated cluster to a user who wanted variety in scent
+    character, not just label diversity - brand-capping has no way to catch
+    that, since it only ever looks at the brand field. A looser cap than
+    brand's default (3 vs 2): this constraint is coarser and less exact than
+    "the same brand twice" - over-restricting it risks discarding genuinely
+    strong matches just for accord variety, which isn't the goal; the goal
+    is avoiding total homogeneity, not banning any accord repetition."""
+    return _cap_by_key(results, limit, key_fn=_dominant_accord, max_per_key=max_per_accord, backfill=backfill)

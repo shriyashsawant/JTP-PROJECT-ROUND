@@ -33,6 +33,13 @@ _client: httpx.AsyncClient | None = None
 _groq_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
 
 
+def get_groq_breaker_state() -> str:
+    """Exposes the module-private breaker's state for the /metrics endpoint
+    (app/core/metrics.py) - the breaker itself has no reason to know about
+    Prometheus, so this is the narrow read-only seam between the two."""
+    return _groq_breaker.state
+
+
 def get_http_client() -> httpx.AsyncClient:
     """Shared client so repeated Groq calls reuse a pooled TCP connection
     instead of paying a fresh connection setup on every request."""

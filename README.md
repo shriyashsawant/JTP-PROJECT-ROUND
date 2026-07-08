@@ -28,12 +28,25 @@ AuraMatch AI is built using a decoupled containerized model running on a custom 
 | **Persistence** | PostgreSQL 16 + pgvector | Self-contained vector database, pre-loaded with over 40,000 fragrances and optimized with HNSW indices. |
 | **Orchestration**| Docker Compose | Coordinates multi-container network boundaries and environment variables. |
 
+### Architecture, illustrated
+
+<p>
+  <img src="documentation/assets/architecture/plate-01-topology.png" alt="System topology: three Docker containers on one bridge network, Groq outside it" width="49%" />
+  <img src="documentation/assets/architecture/plate-02-lifecycle.png" alt="Request lifecycle: 11 steps from client request to response" width="49%" />
+</p>
+<p>
+  <img src="documentation/assets/architecture/plate-03-data-model.png" alt="Data model: perfumes and api_keys tables with HNSW/GIN/trigram indexes" width="49%" />
+  <img src="documentation/assets/architecture/plate-04-pipeline.png" alt="Scoring and diversity capping pipeline, narrowing a wide candidate pool to the final response" width="49%" />
+</p>
+
+The full interactive version - same four diagrams, scrollable, with captions - lives at [`documentation/architecture-diagram.html`](documentation/architecture-diagram.html); open it directly in a browser (no server needed).
+
 For detailed system specs, refer to:
-*   [System Architecture Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/SYSTEM_ARCHITECTURE.md)
-*   [Decision Engine Scoring Logic Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/DECISION_ENGINE.md)
-*   [Data Ingestion and Schema Migrations Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/DATA_INGESTION_PIPELINE.md)
-*   [Third-Party API Integration Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/THIRD_PARTY_API.md)
-*   [Testing & Observability Guide](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/TESTING_AND_OBSERVABILITY.md)
+*   [System Architecture Guide](documentation/SYSTEM_ARCHITECTURE.md)
+*   [Decision Engine Scoring Logic Guide](documentation/DECISION_ENGINE.md)
+*   [Data Ingestion and Schema Migrations Guide](documentation/DATA_INGESTION_PIPELINE.md)
+*   [Third-Party API Integration Guide](documentation/THIRD_PARTY_API.md)
+*   [Testing & Observability Guide](documentation/TESTING_AND_OBSERVABILITY.md)
 
 ---
 
@@ -53,6 +66,7 @@ docker compose up --build -d
 ```
 *   **Note**: The database container is pre-loaded with schema configurations and seeding files, auto-loading 40K+ perfumes on first boot. The backend container applies any pending database migrations automatically on startup before serving requests - no manual migration step is required.
 *   First boot restores ~40K rows and can take several minutes depending on disk speed; subsequent restarts are fast since the data persists in a Docker volume.
+*   **You do not need to run anything else to populate data** - `backend/seed_data.py` is a one-time dev-time tool used to originally assemble the pre-loaded snapshot above; it is not part of this startup flow, is not run automatically, and (unlike everything above) some of its optional data sources require Kaggle API credentials to re-run from scratch. A plain `docker compose up` never touches it.
 
 ### 3.3 Step 3: Access the Interfaces
 *   **Web Portal**: [http://localhost:3000](http://localhost:3000) - the intended way to use the app; no API key needed, the frontend handles this internally (see §7).
@@ -62,14 +76,15 @@ docker compose up --build -d
 
 ## 4. Ingestion Data Structure
 
-The ingestion pipeline deduplicates and processes data from four primary sources:
-1.  **DA Fragrance Analysis (Fragrantica Scraped)**: 38,000 raw rows containing detailed accords and ingredients.
-2.  **Fragrantica Cleaned**: 24,000 rows containing structured top, heart, and base notes.
-3.  **Nandini Perfumes**: 2,200 rows containing image links and product descriptions.
-4.  **Indian Brand Supplement**: Mass-market curated data.
+The ingestion pipeline deduplicates and processes data from the following declared public datasets:
+1.  **DA Fragrance Analysis**: 38,000 rows containing detailed accords and ingredients (public dataset).
+2.  **Fragrantica Dataset (Kaggle: olgagmiufana1/fragrantica-com-fragrance-dataset)**: 24,000 rows containing structured top, heart, and base notes.
+3.  **Nandini Perfumes (Kaggle: nandini1999/perfume-recommendation-dataset)**: 2,200 rows containing image links and product descriptions.
+4.  **Indian Brand Mainstream Supplement**: Curated brand and pricing data.
 
 *   **Pricing**: Prices are normalized into INR (₹) using brand-tier estimates (ranging from luxury designers to local brands).
 *   **Longevity/Sillage**: Generated at ingestion using position-weighted accord profiles. Heavier accords (leather, woods) receive higher longevity weights, while highly volatile notes (citrus, green) receive lower weights.
+*   **Data quality is surfaced, not hidden**: a minority of rows (mostly older, pre-pipeline `legacy_seed` records) have no verified note pyramid - their `top_notes`/`heart_notes`/`base_notes` are inferred from `main_accords` at request time (`db_repository._resolve_pyramid`) rather than left blank. Every API response carries a `has_limited_data` flag for exactly this case, and the web UI shows a small "notes inferred from accords" notice on those results instead of silently presenting an inferred pyramid as verified fact.
 
 ---
 
@@ -81,12 +96,13 @@ The ingestion pipeline deduplicates and processes data from four primary sources
 | `POST` | `/api/v1/search/dupe` | Identifies affordable alternative scents within the specified budget limits. |
 | `GET` | `/api/v1/perfume/{id}` | Returns metadata, sillage/longevity scores, and scent pyramids for a selected perfume. |
 | `GET` | `/api/v1/health` | Verifies database connectivity. |
+| `GET` | `/metrics` | Prometheus scrape target - HTTP latency/error rates, DB pool utilization, circuit-breaker state, rate-limit rejections. Unauthenticated, same convention as `/health`. |
 
 ---
 
 ## 6. QA Verification and Testing
 
-The application is validated by a test suite comprising **210 unit and integration tests** covering matching logic, intent detection, circuit breaker/rate-limiter operations, API key authentication, schemas, and database fallbacks.
+The application is validated by a test suite comprising **287 unit and integration tests** covering matching logic, intent detection, circuit breaker/rate-limiter operations, API key authentication, schemas, database fallbacks, and observability metrics.
 
 To execute tests locally:
 ```bash
@@ -107,4 +123,4 @@ To call the API directly (via `curl`, Postman, or Swagger's "Try it out"), issue
 cd backend
 python scripts/issue_api_key.py --type secret --label "manual testing" --rate-limit 300
 ```
-This prints a raw key once (save it - it can't be recovered afterward). Send it as `X-API-Key: <key>` on each request. Full details - the publishable-vs-secret key model, rate limits, and error format - are in [documentation/THIRD_PARTY_API.md](file:///c:/Users/SHRIYASH%20SAWANT/OneDrive/Desktop/JTP-PROJECT%20ROUND/documentation/THIRD_PARTY_API.md).
+This prints a raw key once (save it - it can't be recovered afterward). Send it as `X-API-Key: <key>` on each request. Full details - the publishable-vs-secret key model, rate limits, and error format - are in [documentation/THIRD_PARTY_API.md](documentation/THIRD_PARTY_API.md).

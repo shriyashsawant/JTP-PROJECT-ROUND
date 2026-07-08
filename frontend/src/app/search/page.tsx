@@ -63,6 +63,44 @@ const QUICK_REPLIES = {
     { label: "Under ₹5,000", value: "Under 5000" },
     { label: "No limit", value: "No budget limit" },
   ],
+  // Below: newer questions covering scoring dimensions that used to only be
+  // caught opportunistically (or, for longevity/projection, silently
+  // defaulted from occasion - see scenario_map.SCENARIO_PERFORMANCE_DEFAULTS)
+  // rather than asked outright. Longevity (0.20 weight) and projection (0.10)
+  // both include a "let AuraMatch decide" option that deliberately carries no
+  // hour/projection phrase at all, so it falls straight through to that
+  // occasion-based default instead of forcing a real preference out of
+  // someone who doesn't have one.
+  avoidNotes: [
+    { label: "No vanilla", value: "No vanilla please" },
+    { label: "No oud", value: "No oud please" },
+    { label: "No musk", value: "No musk please" },
+    { label: "None - no restrictions", value: "No specific notes to avoid" },
+  ],
+  longevity: [
+    { label: "A few hours (4-6)", value: "4-6 hours" },
+    { label: "Most of the day (6-8)", value: "6-8 hours" },
+    { label: "All day (8+)", value: "8+ hours" },
+    { label: "Let AuraMatch decide", value: "No specific longevity preference, use your best judgement for the occasion" },
+  ],
+  projection: [
+    { label: "Subtle, close to skin", value: "close to skin" },
+    { label: "Moderate", value: "moderate projection" },
+    { label: "Strong, room-filling", value: "room-filling" },
+    { label: "Let AuraMatch decide", value: "No specific projection preference, use your best judgement for the occasion" },
+  ],
+  age: [
+    { label: "Under 25", value: "22 years old" },
+    { label: "25-40", value: "30 years old" },
+    { label: "Over 40", value: "45 years old" },
+    { label: "Prefer not to say", value: "Prefer not to say my age" },
+  ],
+  skinType: [
+    { label: "Dry", value: "I have dry skin" },
+    { label: "Oily", value: "I have oily skin" },
+    { label: "Normal", value: "I have normal skin" },
+    { label: "Not sure / skip", value: "No specific skin type" },
+  ],
 };
 
 const CHEAPER_RE = /\b(cheap(er)?|less expensive|lower budget|reduce.*budget)\b/i;
@@ -77,8 +115,64 @@ const HAS_DIGIT_RE = /\d/;
 // an arbitrary word list.
 const OCCASION_RE = /\b(gym|office|work|date|party|wedding|daily|casual|summer|winter|monsoon|spring|autumn|fall|evening|night|formal|festival|commute|travel|college|school)\b/i;
 const SCENT_RE = /\b(woody|floral|citrus|fresh|sweet|spicy|oud|musk|vanilla|aquatic|fruity|gourmand|aromatic|earthy|smoky|leather|powdery)\b/i;
-const BUDGET_RE = /(\d|budget|cheap|expensive|affordable|under|below|within|₹|rs\.?\s*\d|no limit|unlimited)/i;
+// Regression: a bare `\d` alternative here used to be "safe enough" when
+// budget was always the 4th (and last free-text-numeric) question asked.
+// Once longevity ("8+ hours") and age ("22 years old") got their own
+// questions ahead of budget in the sequence, their digits alone satisfied
+// this regex against the *whole* conversation, silently marking budget as
+// already answered and skipping it entirely - caught by simulating the full
+// 9-question sequence end to end, not by any single-message test. A bare
+// number with no currency/budget wording is no longer enough on its own;
+// buildClarifyingQuestion's wasAsked(...,"budget") fallback still correctly
+// recognizes a plain "2000" typed in direct response to the budget question.
+const BUDGET_RE = /(budget|cheap|expensive|affordable|under|below|within|₹|rs\.?\s*\d|no limit|unlimited)/i;
 const DUPE_RE = /\b(alternative|dupe|cheaper than|similar to|instead of)\b/i;
+
+// Single source of truth for gender vocabulary - kept in sync with backend/
+// app/services/scenario_map.py's MALE_HINTS/FEMALE_HINTS/UNISEX_HINTS.
+// Previously duplicated across three separate regex literals here
+// (GENDER_HINT_RE below + two more inline in extractPreferences), which had
+// already drifted out of sync with each other and with the backend -
+// GENDER_HINT_RE was missing "gentleman"/"gentlemen"/"lady"/"ladies" even
+// though this same diff added them to the backend's MALE_HINTS/FEMALE_HINTS,
+// so a message like "movie for a lady?" could be bounced as off-topic by
+// looksOffTopic() while the backend would have recognized the same gender
+// signal.
+const MALE_WORDS = "men|man|male|masculine|boys?|him|gentlemen|gentleman";
+const FEMALE_WORDS = "women|woman|female|feminine|girls?|her|ladies|lady";
+const UNISEX_WORDS = "unisex|shared|both";
+const MALE_GENDER_RE = new RegExp(`\\b(${MALE_WORDS})\\b`, "i");
+const FEMALE_GENDER_RE = new RegExp(`\\b(${FEMALE_WORDS})\\b`, "i");
+const UNISEX_GENDER_RE = new RegExp(`\\b(${UNISEX_WORDS})\\b`, "i");
+const GENDER_HINT_RE = new RegExp(`\\b(${MALE_WORDS}|${FEMALE_WORDS}|${UNISEX_WORDS})\\b`, "i");
+
+// Regression: "suggest me a book" matched none of the regexes above (no
+// gender/occasion/scent/budget word), so buildClarifyingQuestion fell
+// straight through to "ask about gender" as if it were just a vague
+// fragrance request - answering a completely different kind of ask with a
+// perfume-specific follow-up question. Deliberately narrow (a fixed list of
+// common other-domain asks), not a broad "is this fragrance-related"
+// classifier - a genuinely vague but real fragrance ask ("something nice
+// for my mom") has no fragrance keyword either and must still go through
+// the normal clarification flow, not get bounced as off-topic.
+const OFF_TOPIC_RE = /\b(book|novel|movie|film|show|series|song|music|playlist|recipe|restaurant|joke|riddle|poem|haircut|hairstyle|car|phone|laptop|game|videogame)\b/i;
+const FRAGRANCE_TOPIC_RE = /\b(perfume|fragrance|scent|cologne|eau de|edp|edt|ittar|attar|deodorant|deo|smell|aroma|aftershave)\b/i;
+
+function looksOffTopic(messages: ChatMessage[]): boolean {
+  const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
+  if (!OFF_TOPIC_RE.test(userTexts)) return false;
+  // Any real fragrance signal anywhere in the conversation - vocabulary,
+  // occasion, scent family, gender, budget, or dupe-intent - means this is
+  // still a genuine (if oddly worded) fragrance ask, not actually off-topic.
+  return !(
+    FRAGRANCE_TOPIC_RE.test(userTexts) ||
+    OCCASION_RE.test(userTexts) ||
+    SCENT_RE.test(userTexts) ||
+    BUDGET_RE.test(userTexts) ||
+    DUPE_RE.test(userTexts) ||
+    GENDER_HINT_RE.test(userTexts)
+  );
+}
 
 // The backend only ever reads age from an explicit `age` request field
 // (routes_search.py: `age=req.age`) - there's no server-side detection of
@@ -92,11 +186,75 @@ const DUPE_RE = /\b(alternative|dupe|cheaper than|similar to|instead of)\b/i;
 // anywhere, which would be far too easy to confuse with something else.
 const AGE_RE = /\b(\d{1,2})\s*(?:years?\s*old|yo\b|y\/o)\b|^(\d{1,2})\b(?=[\s,])/i;
 
+// Regression: "i'm twenty two i do go to parties..." stated age in words,
+// not digits - AGE_RE only ever matched digit forms ("22 years old", a bare
+// "22" at message start), so this was silently missed and the age question
+// got asked anyway despite the user having already answered it. Mirrors
+// AGE_RE's own conservatism (a self-intro phrase or an explicit "years old"
+// suffix), just for spelled-out numbers instead of digits.
+const NUMBER_WORDS: Record<string, number> = {
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+const ONES_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+};
+const NUMBER_WORD_ALT = Object.keys(NUMBER_WORDS).join("|");
+const WORD_AGE_RE = new RegExp(
+  `\\b(?:i'?m|i\\s+am)\\s+((?:${NUMBER_WORD_ALT})(?:[\\s-](?:one|two|three|four|five|six|seven|eight|nine))?)\\b` +
+  `|\\b((?:${NUMBER_WORD_ALT})(?:[\\s-](?:one|two|three|four|five|six|seven|eight|nine))?)\\s+years?\\s*old\\b`,
+  "i"
+);
+
+function wordsToAge(phrase: string): number | undefined {
+  const parts = phrase.toLowerCase().trim().split(/[\s-]+/);
+  const tens = NUMBER_WORDS[parts[0]];
+  if (tens === undefined) return undefined;
+  if (parts.length === 1) return tens;
+  if (tens >= 20 && parts.length === 2 && ONES_WORDS[parts[1]] !== undefined) {
+    return tens + ONES_WORDS[parts[1]];
+  }
+  return undefined;
+}
+
 function extractAge(text: string): number | undefined {
-  const match = AGE_RE.exec(text.trim());
+  const trimmed = text.trim();
+  const match = AGE_RE.exec(trimmed);
+  if (match) {
+    const age = Number(match[1] ?? match[2]);
+    if (age >= 13 && age <= 100) return age;
+  }
+  const wordMatch = WORD_AGE_RE.exec(trimmed);
+  if (wordMatch) {
+    const age = wordsToAge(wordMatch[1] ?? wordMatch[2]);
+    if (age !== undefined && age >= 13 && age <= 100) return age;
+  }
+  return undefined;
+}
+
+// Mirrors (loosely - just enough to know "has this already been answered",
+// the backend's own regexes in intent_detector.py/scenario_map.py do the
+// real parsing at request time) LONGEVITY_HOUR_PATTERN/LONGEVITY_PHRASES and
+// PROJECTION_HINTS - so a query that already naturally states "8+ hours" or
+// "subtle, close to skin" skips the corresponding question instead of asking
+// something the user already answered unprompted.
+const LONGEVITY_HINT_RE = /\b\d{1,2}\s*\+?\s*(?:(?:-\s*|to\s+|or\s+)\d{1,2}\s*)?(?:hour|hr)s?\b|\b(long.?lasting|lasts?\s+(all|full)\s+day|all.?day)\b/i;
+const PROJECTION_HINT_RE = /\b(subtle|close to skin|skin scent|light projection|moderate projection|strong projection|room.?filling|beast mode|sillage)\b/i;
+
+// skin_type has no free-text detector on the backend at all (unlike gender/
+// budget/scenario/longevity/projection) - it's only ever read from the
+// explicit `skin_type` request field (app/services/decision_engine.py's
+// SKIN_TYPE_PHRASES), so unlike everything else here, this needs to be
+// extracted client-side and threaded through explicitly, not just left to
+// flow into the free-text query.
+const SKIN_TYPE_VALUE_RE = /\b(dry|oily|normal)\b\s*skin|\bskin\b\s*(?:is\s*)?(dry|oily|normal)\b/i;
+
+function extractSkinType(messages: ChatMessage[]): string | undefined {
+  const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
+  const match = SKIN_TYPE_VALUE_RE.exec(userTexts);
   if (!match) return undefined;
-  const age = Number(match[1] ?? match[2]);
-  return age >= 13 && age <= 100 ? age : undefined;
+  return (match[1] ?? match[2])?.toLowerCase();
 }
 
 interface ExtractedPreferences {
@@ -106,16 +264,27 @@ interface ExtractedPreferences {
   budget?: string;
 }
 
-function extractPreferences(messages: ChatMessage[]): ExtractedPreferences {
-  // Find the index of the last message that was a restart / no-results prompt
+// Shared "since the last restart" boundary - every consumer of message
+// history that needs to reason about "the current attempt" (not stale
+// pre-restart context) must go through this same slice. Previously
+// duplicated inline in three places (extractPreferences, sendMessage, and -
+// the actual bug this fixes - never applied at all in wasAsked/
+// buildClarifyingQuestion's own userTexts/DUPE_RE check), which let those
+// two silently see pre-restart messages: after a "couldn't find any" reset,
+// wasAsked(messages, "gender") still found the OLD pre-reset clarification
+// question anywhere in full history and returned true, permanently
+// skipping re-collection of every one of the 9 answers on the next attempt.
+function getActiveMessages(messages: ChatMessage[]): ChatMessage[] {
   const lastResetIndex = [...messages].reverse().findIndex(
     (m) => m.role === "assistant" && m.isClarification && m.content.includes("couldn't find any")
   );
-
-  // If found, slice the messages to only include ones after the reset
-  const activeMessages = lastResetIndex !== -1
+  return lastResetIndex !== -1
     ? messages.slice(messages.length - 1 - lastResetIndex)
     : messages;
+}
+
+function extractPreferences(messages: ChatMessage[]): ExtractedPreferences {
+  const activeMessages = getActiveMessages(messages);
 
   const userTexts = activeMessages
     .filter((m) => m.role === "user")
@@ -125,11 +294,11 @@ function extractPreferences(messages: ChatMessage[]): ExtractedPreferences {
   const prefs: ExtractedPreferences = {};
 
   // Extract Gender
-  if (/\b(men|man|male|masculine|boys?|him)\b/i.test(userTexts)) {
+  if (MALE_GENDER_RE.test(userTexts)) {
     prefs.gender = "male";
-  } else if (/\b(women|woman|female|feminine|girls?|her)\b/i.test(userTexts)) {
+  } else if (FEMALE_GENDER_RE.test(userTexts)) {
     prefs.gender = "female";
-  } else if (/\b(unisex|shared|both)\b/i.test(userTexts)) {
+  } else if (UNISEX_GENDER_RE.test(userTexts)) {
     prefs.gender = "unisex";
   }
 
@@ -154,34 +323,87 @@ function extractPreferences(messages: ChatMessage[]): ExtractedPreferences {
   return prefs;
 }
 
-function buildClarifyingQuestion(messages: ChatMessage[]): { content: string; type: "gender" | "occasion" | "scent" | "budget" } | null {
-  const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
+type QuestionType = "gender" | "occasion" | "scent" | "avoidNotes" | "longevity" | "projection" | "budget" | "age" | "skinType";
+
+// The 5 newer question types don't have the same reliable positive-content
+// pattern gender/occasion/scent/budget do (a "let AuraMatch decide" or
+// "prefer not to say" answer has no clean signal to regex-match), so
+// "already asked once in this active segment" is the completion check for
+// those instead of re-deriving it from message content every time - once
+// asked, whatever the user replies (including a skip) counts as answered.
+// Scoped via getActiveMessages, not the raw `messages` passed in - without
+// this, a question asked before a "couldn't find any" restart still counted
+// as "asked" on the next attempt and was silently never re-asked.
+function wasAsked(messages: ChatMessage[], type: QuestionType): boolean {
+  return getActiveMessages(messages).some((m) => m.role === "assistant" && m.isClarification && m.questionType === type);
+}
+
+function buildClarifyingQuestion(messages: ChatMessage[]): { content: string; type: QuestionType } | null {
+  const activeMessages = getActiveMessages(messages);
+  const userTexts = activeMessages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
   if (DUPE_RE.test(userTexts)) return null;
 
   const prefs = extractPreferences(messages);
 
-  if (!prefs.gender) {
+  // Ordered by scoring weight (see decision_engine.py / DECISION_ENGINE.md
+  // §2.2), not just the original 4 - occasion (0.28) and note match still
+  // come first, but longevity (0.20) and projection (0.10) now get their own
+  // question too, ahead of budget/age/skin-type (0.05 or a soft nudge only).
+  if (!prefs.gender && !wasAsked(messages, "gender")) {
     return {
       content: "First, could you tell me if this scent is for a male, female, or unisex preference?",
       type: "gender",
     };
   }
-  if (!prefs.occasion) {
+  if (!prefs.occasion && !wasAsked(messages, "occasion")) {
     return {
       content: "Got it. What occasion or season is this fragrance for (e.g. gym, office, date night, summer)?",
       type: "occasion",
     };
   }
-  if (!prefs.scent) {
+  if (!prefs.scent && !wasAsked(messages, "scent")) {
     return {
       content: "Understood. What kind of scent profile do you prefer (e.g. fresh/citrus, woody/earthy, sweet/gourmand, floral, spicy)?",
       type: "scent",
     };
   }
-  if (!prefs.budget) {
+  if (!wasAsked(messages, "avoidNotes")) {
     return {
-      content: "Finally, do you have a target budget in INR (e.g. under ₹2,000, under ₹5,000, or no limit)?",
+      content: "Any notes or ingredients you'd like to avoid?",
+      type: "avoidNotes",
+    };
+  }
+  if (!LONGEVITY_HINT_RE.test(userTexts) && !wasAsked(messages, "longevity")) {
+    return {
+      content: "How long should it last on skin?",
+      type: "longevity",
+    };
+  }
+  if (!PROJECTION_HINT_RE.test(userTexts) && !wasAsked(messages, "projection")) {
+    return {
+      content: "How noticeable should it be to people around you?",
+      type: "projection",
+    };
+  }
+  if (!prefs.budget && !wasAsked(messages, "budget")) {
+    return {
+      content: "Do you have a target budget in INR (e.g. under ₹2,000, under ₹5,000, or no limit)?",
       type: "budget",
+    };
+  }
+  const hasStatedAge = messages
+    .filter((m) => m.role === "user")
+    .some((m) => extractAge(m.content) !== undefined);
+  if (!hasStatedAge && !wasAsked(messages, "age")) {
+    return {
+      content: "What's your age group? This helps fine-tune recommendations, but it's entirely optional.",
+      type: "age",
+    };
+  }
+  if (!wasAsked(messages, "skinType")) {
+    return {
+      content: "Last one - do you know your skin type? Scents wear differently on dry vs. oily skin.",
+      type: "skinType",
     };
   }
 
@@ -202,13 +424,13 @@ interface ChatMessage {
   perfumes?: Perfume[];
   isError?: boolean;
   isClarification?: boolean;
-  questionType?: "gender" | "occasion" | "scent" | "budget";
+  questionType?: QuestionType;
   // Snapshotted at the moment this turn's results were fetched, so "Show
   // More" can re-run the exact same search with a larger limit later -
   // frozen per-message rather than read from the live conversation state,
   // since the conversation (and its sliding CONTEXT_WINDOW) may have moved
   // on by the time the button is clicked.
-  searchParams?: { query: string; budget?: number; dealBreaker?: boolean; age?: number };
+  searchParams?: { query: string; budget?: number; dealBreaker?: boolean; age?: number; skinType?: string };
   currentLimit?: number;
   loadingMore?: boolean;
 }
@@ -495,6 +717,18 @@ export default function SearchPage() {
     setMessages(nextMessages);
     setInput("");
 
+    if (looksOffTopic(nextMessages)) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "I'm AuraMatch, a fragrance recommendation assistant - I can help you find a perfume or a cheaper alternative to one, but I can't help with that. What kind of scent are you looking for?",
+        },
+      ]);
+      return;
+    }
+
     const clarification = buildClarifyingQuestion(nextMessages);
     if (clarification) {
       setMessages((prev) => [
@@ -513,7 +747,32 @@ export default function SearchPage() {
     setLoading(true);
 
     const allUserTexts = nextMessages.filter((m) => m.role === "user").map((m) => m.content);
-    const combinedQuery = allUserTexts.slice(-CONTEXT_WINDOW).join(". ");
+
+    // Same "since the last restart" boundary extractPreferences/wasAsked use,
+    // so the Q&A intake and the actual search agree on where the current
+    // attempt begins.
+    const activeMessages = getActiveMessages(nextMessages);
+    const hasSearchedBeforeInSegment = activeMessages.some((m) => m.role === "assistant" && m.perfumes && m.perfumes.length > 0);
+
+    // Regression: expanding the clarification flow from 4 to 9 questions
+    // exposed a real bug here - a fixed CONTEXT_WINDOW=3 was fine when the
+    // last 3 messages were occasion+scent+budget, but with 9 answers, the
+    // first real search only ever saw the *last 3* (typically budget/age/
+    // skin-type), silently dropping gender/occasion/scent/notes/longevity/
+    // projection from the actual query even though the user had just
+    // answered every one of them - directly observed live: a fully-answered
+    // 9-question flow still scored every result in the 25-31% range, because
+    // almost none of what was answered ever reached the backend. The 9
+    // answers all belong to *one* still-being-built initial request, not a
+    // sequence of independent turns, so the first search after intake uses
+    // every answer given so far; only once real results have already been
+    // shown does the smaller sliding window make sense again - that's
+    // genuine turn-by-turn refinement ("cheaper please", "actually more
+    // woody"), where letting an old superseded preference age out is exactly
+    // the point (see CONTEXT_WINDOW's own comment).
+    const combinedQuery = hasSearchedBeforeInSegment
+      ? allUserTexts.slice(-CONTEXT_WINDOW).join(". ")
+      : activeMessages.filter((m) => m.role === "user").map((m) => m.content).join(". ");
 
     // Age is a stable fact, not a shifting preference like scent/occasion -
     // it doesn't need to "age out" of the sliding window the way an earlier,
@@ -521,6 +780,11 @@ export default function SearchPage() {
     // conversation so far, not just the last few messages, so mentioning it
     // once near the start of a long conversation still applies later.
     const age = allUserTexts.map(extractAge).find((a) => a !== undefined);
+
+    // skin_type has no free-text detector on the backend at all (see
+    // extractSkinType's comment) - unlike everything else here, it has to be
+    // pulled out and sent as its own explicit field or it's silently lost.
+    const skinType = extractSkinType(nextMessages);
 
     // Bare "cheaper"/"less expensive" with no number can't be picked up by
     // the backend's own detect_budget_from_text (it needs an actual figure) -
@@ -550,6 +814,7 @@ export default function SearchPage() {
         budget: explicitBudget,
         deal_breaker: dealBreaker,
         age,
+        skin_type: skinType,
       });
       if (results.length === 0) {
         setMessages((prev) => [
@@ -571,7 +836,7 @@ export default function SearchPage() {
           role: "assistant",
           content: buildSummaryLine(results),
           perfumes: results,
-          searchParams: { query: combinedQuery, budget: explicitBudget, dealBreaker, age },
+          searchParams: { query: combinedQuery, budget: explicitBudget, dealBreaker, age, skinType },
           currentLimit: RESULTS_LIMIT,
         },
       ]);
@@ -608,6 +873,7 @@ export default function SearchPage() {
         budget: target.searchParams.budget,
         deal_breaker: target.searchParams.dealBreaker,
         age: target.searchParams.age,
+        skin_type: target.searchParams.skinType,
       });
       setMessages((prev) =>
         prev.map((m) =>
@@ -741,6 +1007,13 @@ export default function SearchPage() {
             </button>
           ))}
         </div>
+      )}
+
+      {!isEmpty && (
+        <p className="mt-2 text-center text-[11px] text-muted-foreground">
+          Tip: mention occasion, scent, and budget in one message for the best matches - e.g.{" "}
+          <span className="italic">&quot;fresh citrus scent for the office, under ₹3,000&quot;</span>
+        </p>
       )}
 
       <form

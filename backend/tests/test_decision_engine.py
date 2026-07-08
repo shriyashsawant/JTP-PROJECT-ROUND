@@ -8,6 +8,7 @@ from app.services.decision_engine import (
     _adjust_performance_by_type,
     _age_fit,
     _bridge_fit,
+    _dominant_accord,
     _gender_fit,
     _gender_leaning_modifier,
     _identity_boost,
@@ -17,6 +18,7 @@ from app.services.decision_engine import (
     _note_family_fit,
     _price_fit,
     _scenario_fit,
+    cap_by_scent_character,
     cap_per_brand,
     hybrid_score,
     rank_and_explain,
@@ -273,6 +275,22 @@ class TestRankAndExplainIntegration:
         )
         assert ranked[0]["match_score"] < unconstrained[0]["match_score"]
 
+    def test_age_appears_in_match_breakdown_when_requested(self):
+        # AGE_WEIGHT is an active, weighted scoring dimension whenever `age`
+        # is given, but _build_breakdown previously had no age entry at all -
+        # every other active dimension (gender/budget/longevity/projection/
+        # scenario) was visible in the checklist except this one.
+        results = [self._perfume(id=1, main_accords=["woody", "amber"])]
+        ranked = rank_and_explain(results, query="vanilla dream", age=30)
+        labels = [item["label"] for item in ranked[0]["match_breakdown"]]
+        assert any("Age-appropriate profile (30)" in label for label in labels)
+
+    def test_age_absent_from_match_breakdown_when_not_requested(self):
+        results = [self._perfume(id=1)]
+        ranked = rank_and_explain(results, query="vanilla dream")
+        labels = [item["label"] for item in ranked[0]["match_breakdown"]]
+        assert not any("Age-appropriate" in label for label in labels)
+
     def test_bridge_scoring_rewards_fresh_top_dense_base_combo(self):
         # The exact "chemical contradiction" case: a fresh gym scent that
         # must last 12 hours. A single-tier match (pure citrus fades fast,
@@ -471,6 +489,19 @@ class TestCapPerBrand:
     def test_empty_input(self):
         assert cap_per_brand([], limit=6) == []
 
+    def test_brand_matching_is_case_insensitive(self):
+        # Real data-casing inconsistency confirmed live: "Le Labo" and
+        # "le labo" both exist as literal distinct brand strings on real
+        # rows - a case-sensitive key would count them as two different
+        # brands and never cap them against each other at all.
+        results = (
+            [self._perfume(0, "Le Labo"), self._perfume(1, "le labo"), self._perfume(2, "LE LABO")]
+            + [self._perfume(i, f"other{i}") for i in range(10, 14)]
+        )
+        capped = cap_per_brand(results, limit=6, max_per_brand=2)
+        le_labo_count = sum(1 for r in capped if r["brand"].lower() == "le labo")
+        assert le_labo_count == 2  # capped, not 3 - enough real alternatives exist that backfill isn't forced
+
     def test_relaxes_fairly_across_all_over_represented_brands_not_just_one(self):
         # Regression: an earlier version's backfill pulled unconditionally
         # from the raw overflow list, which could readmit 3+ copies of the
@@ -493,6 +524,23 @@ class TestCapPerBrand:
         assert brand_counts["A"] == 3  # forced minimum, not 4 or 5
         assert brand_counts["B"] == brand_counts["C"] == brand_counts["D"] == 1
 
+    def test_limit_smaller_than_max_per_brand_still_returns_results(self):
+        # Real bug, confirmed live: POST /search/dupe with limit=1 returned
+        # [] over real HTTP (limit=2 through 5 worked fine). Root cause: with
+        # backfill=True and limit(1) < max_per_brand(2), max_cap was set to
+        # limit itself (1) - below the starting cap (2) - so the while loop's
+        # own entry condition failed before a single pass ran.
+        results = [self._perfume(i, f"brand{i}") for i in range(3)]
+        capped = cap_per_brand(results, limit=1, max_per_brand=2)
+        assert len(capped) == 1
+        assert capped[0]["id"] == 0
+
+    def test_limit_one_with_a_single_over_represented_brand(self):
+        results = [self._perfume(i, "A") for i in range(3)]
+        capped = cap_per_brand(results, limit=1, max_per_brand=2)
+        assert len(capped) == 1
+        assert capped[0]["id"] == 0
+
     def test_strict_mode_never_relaxes_even_if_short_of_limit(self):
         # backfill=False is for the wide pre-LLM pool: relaxing the cap to
         # hit a large fetch_limit (e.g. 25) would let an over-represented
@@ -503,3 +551,68 @@ class TestCapPerBrand:
         capped = cap_per_brand(results, limit=25, max_per_brand=2, backfill=False)
         assert len(capped) == 3  # 2 "A" + 1 "B", nothing more
         assert sum(1 for r in capped if r["brand"] == "A") == 2
+
+
+class TestDominantAccord:
+    def test_returns_lowercased_first_accord(self):
+        assert _dominant_accord({"main_accords": ["Woody", "Amber"]}) == "woody"
+
+    def test_empty_accords_returns_empty_string(self):
+        assert _dominant_accord({"main_accords": []}) == ""
+
+    def test_missing_accords_key_returns_empty_string(self):
+        assert _dominant_accord({}) == ""
+
+
+class TestCapByScentCharacter:
+    def _perfume(self, id, brand, accords):
+        return {"id": id, "brand": brand, "perfume": f"p{id}", "main_accords": accords, "match_score": 100 - id}
+
+    def test_caps_an_over_represented_accord_across_different_brands(self):
+        # The gap cap_per_brand alone can't catch: 6 different brands, but 4
+        # of them are all dominantly "citrus aromatic" - real label
+        # diversity, much less real scent-character diversity. Mirrors
+        # TestCapPerBrand's own over-represented-brand test structure.
+        results = (
+            [self._perfume(i, f"brand{i}", ["citrus aromatic", "fresh"]) for i in range(4)]
+            + [self._perfume(i, f"other{i}", [f"accord{i}"]) for i in range(10, 12)]
+        )
+        capped = cap_by_scent_character(results, limit=6, max_per_accord=2)
+        assert len(capped) == 6
+        accord_counts: dict[str, int] = {}
+        for r in capped:
+            key = _dominant_accord(r)
+            accord_counts[key] = accord_counts.get(key, 0) + 1
+        assert accord_counts["citrus aromatic"] == 4  # forced minimum via backfill (only 2 alternatives exist)
+        assert accord_counts["accord10"] == 1
+        assert accord_counts["accord11"] == 1
+
+    def test_no_cap_needed_when_already_diverse(self):
+        results = [self._perfume(i, f"brand{i}", [f"accord{i}"]) for i in range(5)]
+        capped = cap_by_scent_character(results, limit=5, max_per_accord=3)
+        assert [r["id"] for r in capped] == [0, 1, 2, 3, 4]
+
+    def test_preserves_rank_order_for_kept_results(self):
+        results = [
+            self._perfume(0, "A", ["woody"]), self._perfume(1, "B", ["citrus"]),
+            self._perfume(2, "C", ["woody"]), self._perfume(3, "D", ["woody"]),
+        ]
+        capped = cap_by_scent_character(results, limit=4, max_per_accord=1)
+        assert [r["id"] for r in capped[:2]] == [0, 1]
+
+    def test_limit_smaller_than_max_per_accord_still_returns_results(self):
+        # Same class of bug cap_per_brand shipped with (see its own tests) -
+        # shared via _cap_by_key, so covered here for this wrapper too.
+        results = [self._perfume(i, f"brand{i}", ["woody"]) for i in range(3)]
+        capped = cap_by_scent_character(results, limit=1, max_per_accord=3)
+        assert len(capped) == 1
+        assert capped[0]["id"] == 0
+
+    def test_perfumes_with_no_accords_are_not_falsely_grouped_as_diverse(self):
+        # Empty main_accords all map to the same "" key - they should still
+        # be capped against each other (and forced through backfill relaxation
+        # to reach the limit), not treated as N naturally distinct clusters.
+        results = [self._perfume(i, f"brand{i}", []) for i in range(5)]
+        capped = cap_by_scent_character(results, limit=5, max_per_accord=2)
+        assert len(capped) == 5  # backfill still reaches the limit
+        assert [r["id"] for r in capped] == [0, 1, 2, 3, 4]  # rank order preserved throughout

@@ -7,6 +7,7 @@ import Image from "next/image";
 import { Star, Check, Minus, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import LimitedDataNotice from "@/components/LimitedDataNotice";
 import { getAccordGradient, openAmazonSearch } from "@/lib/utils";
 import type { Perfume } from "@/lib/api";
 
@@ -130,6 +131,12 @@ export default function PerfumeCard({
               <p className="text-[11px] font-medium text-muted-foreground">
                 Best for: {perfume.best_for.join(", ")}
               </p>
+            )}
+
+            {perfume.has_limited_data && (
+              <LimitedDataNotice className="text-[11px] font-medium" iconSize={11}>
+                Limited fragrance data - notes inferred from accords
+              </LimitedDataNotice>
             )}
 
             <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">

@@ -57,6 +57,11 @@ class PerfumeResponse(BaseModel):
     projection_label: str | None = None
     best_for: list[str] = []
     match_breakdown: list[MatchCriterion] = []
+    has_limited_data: bool = Field(
+        False, description="True if this perfume has no real note data at all (~21% of the catalog) - "
+        "scent-profile scoring fell back to accord-level tiers rather than real notes, so this is a "
+        "lower-confidence match on note-dependent dimensions specifically, not a generally worse one."
+    )
 
 class PerfumeDetailResponse(BaseModel):
     id: int
@@ -78,6 +83,10 @@ class PerfumeDetailResponse(BaseModel):
     url: str | None = None
     country: str | None = None
     perfumer: str | None = None
+    has_limited_data: bool = Field(
+        False, description="True if this perfume has no real note data at all - the scent pyramid shown "
+        "is inferred from main_accords (see classify_accord_tiers), not real Fragrantica note tags."
+    )
 
 class HealthResponse(BaseModel):
     status: str

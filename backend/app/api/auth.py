@@ -13,6 +13,7 @@ from asyncpg.connection import Connection
 from fastapi import Depends, HTTPException, Request
 
 from app.api.dependencies import get_db
+from app.core.metrics import rate_limit_rejections_total
 from app.services.rate_limiter import check_rate_limit
 
 
@@ -63,7 +64,7 @@ async def require_api_key(request: Request, conn: Connection = Depends(get_db)) 
         if not origin_allowed(origin, row["allowed_origins"]):
             raise HTTPException(403, detail="Origin not allowed for this API key")
         # One publishable key is shared by every real visitor of the
-        # frontend - bucket by (key, client_ip) so a scraped-key abuser
+        # frontend - bucket by (key, client_ip) so an exfiltrated-key abuser
         # hammering it doesn't throttle out every legitimate user sharing
         # that same key (see app/services/rate_limiter.py).
         client_ip = request.client.host if request.client else "unknown"
@@ -74,6 +75,7 @@ async def require_api_key(request: Request, conn: Connection = Depends(get_db)) 
         bucket_key = (row["id"],)
 
     if not await check_rate_limit(bucket_key, row["rate_limit_per_minute"]):
+        rate_limit_rejections_total.labels(key_type=row["key_type"]).inc()
         raise HTTPException(429, detail="Rate limit exceeded")
 
     return ApiKeyContext(id=row["id"], key_type=row["key_type"], label=row["label"])

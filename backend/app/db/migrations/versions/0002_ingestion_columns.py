@@ -1,10 +1,10 @@
 """Add source, source_priority, model_version columns to perfumes.
 
 Supports the ingestion-hardening upsert (backend/app/ingestion/upsert.py):
-`source`/`source_priority` let a live/scraped/user-submitted upsert check
+`source`/`source_priority` let a live/imported/user-submitted upsert check
 "does this incoming record actually outrank what's already stored" before
 overwriting a row - the same source-priority invariant seed_data.py's
-one-time in-memory batch dedup already enforces (scraper_merged=5 >
+one-time in-memory batch dedup already enforces (curated_merged=5 >
 nandini=4 > fra_cleaned=3 > fra_perfumes=2 > da_fragrance=1), now persisted
 so it survives a live, one-row-at-a-time upsert instead of only existing
 during a single batch run. `model_version` supports incremental

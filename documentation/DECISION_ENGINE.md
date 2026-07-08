@@ -42,10 +42,12 @@ Final Score = ( sim·w_sim + note_match·w_note
 | Note family fit | `NOTE_FAMILY_WEIGHT` | **0.15** | No |
 | Chemical bridge fit | `BRIDGE_WEIGHT` | **0.15** | No |
 | Projection (sillage) fit | `PROJECTION_WEIGHT` | **0.10** | No |
+| Gender fit | `GENDER_WEIGHT` | **0.08** | No |
 | Vector similarity | `SIM_WEIGHT` | **0.07** | **Yes** |
 | Price fit | `PRICE_WEIGHT` | **0.05** | No |
-| Gender fit | `GENDER_WEIGHT` | **0.05** | No |
 | Age fit | `AGE_WEIGHT` | **0.05** | No |
+
+**Gender raised from 0.05 to 0.08**: a soft Python-side penalty (`_gender_fit`'s `0.4x` multiplier) on the old, lower weight was easily buried under a perfume that otherwise matched well - live testing found a candidate explicitly named e.g. "...for Women" still surfacing at 59-73% and ranking in the top few results for an explicit male request. Note that an explicitly opposite-gender candidate is now *also* excluded outright at the SQL level (see `db_repository._fetch_candidates`'s `gender` clause) - the raised weight here matters for the softer, still-Python-only case: a genuinely unisex perfume that leans masculine/feminine by note profile (`_gender_leaning_modifier`), which is a matter of degree, not a hard exclusion.
 
 **The scenario/occasion signal carries the most weight (0.28), not raw vector similarity (0.07).** This is deliberate: two perfumes can have similar embeddings just from sharing generic brand/description text, but whether one is actually right for "gym, sweat, hot weather" is a much stronger, more specific correctness signal than embedding proximity alone - so it's weighted roughly 4x higher. Note match (0.20) sits second because a user naming specific ingredients ("something with oud and rose") is about as strong and unambiguous a signal as an explicit occasion.
 
@@ -81,6 +83,8 @@ Gender/price/age/note-family terms never entered the calculation at all - not "c
 Direct note matching compares the query terms against a perfume's ingredients and accords list.
 *   **Whole-Word Containment (`_notes_equivalent`)**: To prevent false-positive matches (e.g. matching "Musk" inside "Musky", or "Rose" inside "Roseview"), the engine performs bounded whole-word matching using regular expressions (`\bterm\b`).
 *   **Fuzzy Set Overlap (`_fuzzy_overlap_count`)**: Note names in databases are often highly specific (e.g. "Sicilian Lemon", "Calabrian Bergamot"). The engine matches these against scenario vocabularies (e.g. "lemon", "bergamot") by evaluating if the database term contains the scenario term as a whole-word component, rather than requiring exact string equality.
+*   **Corrupted-Notes Cleaning (`_clean_notes`, `db_repository.py`)**: ~500 older `legacy_seed` rows carry a data artifact from before the current ingestion pipeline existed - a spurious extra `notes` array element that is actually a serialized-Python-dict string (e.g. `"{'middle': [...], 'base': [...], 'top': [...]}"`). `_clean_notes` strips any note element matching that shape before it ever reaches matching, scoring, or the API response - applied uniformly everywhere notes leave the database (search results, perfume detail, and the dupe engine's reference-perfume lookup), not just one call site, since a garbled string reaching the embedding-query text or the note-overlap score would silently degrade that request.
+*   **Pyramid Fallback and the "Limited Data" Flag (`_resolve_pyramid`, `db_repository.py`)**: rows seeded before the `top_notes`/`heart_notes`/`base_notes` columns existed (or restored from a pre-baked dump predating them) have those columns `NULL`. Rather than showing an empty scent pyramid, the engine classifies tiers on the fly at request time - from the cleaned `notes` list if any exist, or from `main_accords` as a last resort (`classify_accord_tiers`) - using the same heuristic `seed_data.py` uses at ingestion time. Every response also carries `has_limited_data: bool` (true only when a perfume has no real notes at all, i.e. the pyramid was built purely from accords) so the frontend can flag it honestly instead of presenting an inferred pyramid as verified fact - see [FRONTEND_ARCHITECTURE.md §6](FRONTEND_ARCHITECTURE.md).
 
 ### 3.2 Negation Parsing and SQL Pushdown Filtering
 A major failure mode in search engines is the parsing of compound sentences (e.g., *"no vanilla, I want musk"*). 
@@ -119,9 +123,35 @@ Unisex perfumes match both male and female requests. However, some unisex perfum
 *   **Modifier Application**: If a user requests a male scent, and the matching unisex perfume has a clear feminine note bias (feminine count > masculine count + 1), it applies a `0.85` modifier.
 *   **Display Integration**: The match checklist marks the gender criterion as a **"partial"** match instead of "met" or "missed".
 
+### 3.7 Reference Perfume Resolution (`find_reference_perfume`, `db_repository.py`)
+The dupe engine and "cheaper alternative to X" queries both need to resolve a free-text name (e.g. *"dupe for Sauvage under 2000"*) to exactly one catalog row before anything else can run - its `main_accords`/`notes`/`price_inr` become `reference_accords`/`reference_notes` inputs to the scoring dimensions above. Resolution runs four tiers in order, each stricter than the last is loose: **(1)** exact brand+perfume substring match, **(2)** perfume-name-only substring match (brand omitted by the user), **(3)** fuzzy brand+perfume via `pg_trgm` trigram similarity (typo tolerance), **(4)** fuzzy name-only. Tiers 2 and 4 carry a real ambiguity risk - many houses sell a base perfume and several same-named flankers/variants (or the same brand appears under two written forms, e.g. "Dior" and "Christian Dior") - so both are gated by `_is_same_brand_group`, which only accepts the match when every catalog row tied for the best note-availability tier resolves to the *same* brand family (checked via a shared substring "core" of the shortest brand name involved, e.g. `"dior"` inside `"christian dior"` - deliberately a raw substring, not a curated alias table, because real catalog brand names include genuine same-house patterns like `"creed"`/`"creedfor"` with no separating space). Without this guard, a naive "just take any match" resolution genuinely broke `"Sauvage"` → resolving to an unrelated house's row instead of Dior's, because both brands had a row tied at the same best tier.
+
 ---
 
-## 4. Scope of Olfactory Scaling and Future Expansion
+## 4. Result Diversity: Capping Beyond Raw Score
+
+Sorting by score alone can hand back a top-N list that's technically correct but monotonous - five near-identical "citrus aromatic" bottles from five different brands, or the same brand's whole flanker range crowding out everything else. Two independent, composable caps run *after* scoring and sorting, but *before* the final truncation to `limit`:
+
+| Cap | Keyed by | Where applied | Skipped when |
+| :--- | :--- | :--- | :--- |
+| `cap_per_brand` | `brand.lower()` | Both `/search/context` and `/search/dupe` | Never |
+| `cap_by_scent_character` | `main_accords[0].lower()` (the dominant accord) | `/search/context` only | The query names a reference perfume (dupe/"cheaper alternative to X" intent) |
+
+Both share one implementation, `_cap_by_key(results, limit, key_fn, max_per_key, backfill)`, in `decision_engine.py` - a single, well-tested loop rather than two independently-drifting copies of the same subtle algorithm (it has already shipped two real bugs; see below).
+
+**The algorithm**: walk `results` in their already-ranked order, keeping an item only if its key hasn't hit `max_per_key` yet. If `backfill=True` and the pass doesn't fill `limit` slots, relax the cap by one and re-walk - repeating until either `limit` is reached or the cap has relaxed all the way up to `limit` itself. This means: real diversity is preserved whenever enough distinct brands/accords actually exist in the pool, and the cap only ever loosens as a last resort to avoid returning fewer results than asked for.
+
+**Two-stage application, not one**: each route applies its cap *twice*, with different `backfill` settings, for a specific reason:
+1. **Wide pool, strict (`backfill=False`)** - right after the ANN pool is fetched, before the optional LLM re-ranker ever sees it. Not backfilled here deliberately: relaxing the cap to fill a large `fetch_limit` (e.g. 25-120) would let an over-represented brand or accord climb right back up before the LLM (or the final truncation) ever gets a diversified pool to choose from - defeating the entire point of capping at this stage.
+2. **Final slice, backfilled (`backfill=True`)** - at the real `req.limit` (which can be far smaller than `fetch_limit`, or as large as 60 for "Show More"), guaranteeing the response is never shorter than requested purely because of a diversity constraint.
+
+**A real bug this shipped and fixed**: the first version computed the relaxation ceiling as `max_cap = limit if backfill else max_per_key`. When `limit` (e.g. 1, for a "Show More" edge case) was *smaller* than `max_per_key` (2), `max_cap` came out *below* the starting `cap` - the loop's own entry condition failed before a single item was ever added, silently returning `[]` regardless of how many valid candidates existed. Confirmed live: `POST /search/dupe` with `{"limit": 1}` returned an empty array while every other `limit` value worked. Fixed to `max_cap = max(limit, max_per_key) if backfill else max_per_key`.
+
+**A second, subtler gap**: the strict wide-pool pass (stage 1 above) discards candidates permanently - it doesn't reorder them, it removes them from `results` outright. For `cap_per_brand` this is rarely an issue in practice (real brand variety in an ANN pool is high), but `cap_by_scent_character`'s key space is much coarser (a few dozen accords total), so a query whose neighborhood is genuinely scent-homogeneous (e.g. mostly "woody") could get strictly cut down to `max_per_accord` (3) candidates *before* the final stage ever runs - underfilling `req.limit` with no way to recover the discarded candidates, since they're already gone. Both routes now keep a reference to the pool as it stood immediately before this strict cut (`pre_diversity_results`) and backfill any shortfall from it at the final stage - the same remainder-backfill pattern already used when the LLM hands back fewer picks than requested (§ below), just also sourced here.
+
+---
+
+## 5. Scope of Olfactory Scaling and Future Expansion
 
 The decision engine is structured to support future olfactory matching enhancements:
 *   **Skin Chemistry Modifiers**: The engine can be expanded to scale longevity and sillage fits based on the user's skin profile (e.g. dry skin absorbs oils faster, reducing sillage, which would require a sillage boost for heavy EDPs).

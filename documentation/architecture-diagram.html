@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AuraMatch AI — Architecture Field Guide</title>
+<style>
+:root {
+  --bone: #F3EEE3;
+  --ink: #211B12;
+  --ink-soft: #4A4030;
+  --amber: #A15F27;
+  --amber-deep: #7A4419;
+  --stone: #8A7D68;
+  --panel: #EAE1CC;
+  --panel-2: #E1D5B8;
+  --line: #D2C4A3;
+  --line-strong: #B9A87F;
+  --good: #4B6B41;
+  --warn: #9C6B12;
+  --bad: #9A3E2C;
+  --ext: #6E6152;
+  --code-bg: #E7DCC1;
+  --shadow: 0 1px 2px rgba(33,27,18,0.06), 0 6px 20px rgba(33,27,18,0.05);
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bone: #1B1712;
+    --ink: #ECE3D0;
+    --ink-soft: #C7BBA2;
+    --amber: #DA9757;
+    --amber-deep: #EAB076;
+    --stone: #9C9079;
+    --panel: #272019;
+    --panel-2: #2F2620;
+    --line: #3B3122;
+    --line-strong: #4E4230;
+    --good: #8FAE80;
+    --warn: #D8A94F;
+    --bad: #D67A61;
+    --ext: #A99C86;
+    --code-bg: #241D16;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px rgba(0,0,0,0.35);
+  }
+}
+:root[data-theme="dark"] {
+  --bone: #1B1712;
+  --ink: #ECE3D0;
+  --ink-soft: #C7BBA2;
+  --amber: #DA9757;
+  --amber-deep: #EAB076;
+  --stone: #9C9079;
+  --panel: #272019;
+  --panel-2: #2F2620;
+  --line: #3B3122;
+  --line-strong: #4E4230;
+  --good: #8FAE80;
+  --warn: #D8A94F;
+  --bad: #D67A61;
+  --ext: #A99C86;
+  --code-bg: #241D16;
+  --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px rgba(0,0,0,0.35);
+}
+:root[data-theme="light"] {
+  --bone: #F3EEE3;
+  --ink: #211B12;
+  --ink-soft: #4A4030;
+  --amber: #A15F27;
+  --amber-deep: #7A4419;
+  --stone: #8A7D68;
+  --panel: #EAE1CC;
+  --panel-2: #E1D5B8;
+  --line: #D2C4A3;
+  --line-strong: #B9A87F;
+  --good: #4B6B41;
+  --warn: #9C6B12;
+  --bad: #9A3E2C;
+  --ext: #6E6152;
+  --code-bg: #E7DCC1;
+  --shadow: 0 1px 2px rgba(33,27,18,0.06), 0 6px 20px rgba(33,27,18,0.05);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bone);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+}
+::selection { background: var(--amber); color: var(--bone); }
+
+.wrap {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 4rem 1.5rem 6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3.2rem;
+}
+
+.masthead {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2.2rem;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: clamp(2rem, 4.4vw, 2.9rem);
+  line-height: 1.12;
+  margin: 0;
+  text-wrap: balance;
+  color: var(--ink);
+}
+h1 em { font-style: italic; color: var(--amber); }
+.dek {
+  max-width: 62ch;
+  color: var(--ink-soft);
+  font-size: 1.02rem;
+}
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.4rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--stone);
+  margin-top: 0.4rem;
+}
+.meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+nav.toc {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.6rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+nav.toc a {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 0.88rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--amber); background: var(--panel-2); }
+nav.toc a:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+nav.toc .n { font-family: var(--mono); color: var(--amber); font-size: 0.78rem; }
+
+section.plate { display: flex; flex-direction: column; gap: 1.1rem; scroll-margin-top: 1.5rem; }
+.plate-head { display: flex; flex-direction: column; gap: 0.35rem; }
+.plate-num {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 1.6rem;
+  margin: 0;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.plate-dek { max-width: 68ch; color: var(--ink-soft); font-size: 0.96rem; }
+
+.diagram-frame {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.diagram-scroll {
+  overflow-x: auto;
+  padding: 1.4rem;
+}
+.diagram-scroll svg { display: block; margin: 0 auto; min-width: 640px; }
+.diagram-caption {
+  border-top: 1px solid var(--line);
+  padding: 0.85rem 1.4rem;
+  font-size: 0.82rem;
+  color: var(--stone);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.6rem;
+}
+.diagram-caption b { color: var(--ink-soft); }
+
+.prose { max-width: 68ch; color: var(--ink-soft); font-size: 0.96rem; }
+.prose b { color: var(--ink); font-weight: 600; }
+.prose code, .plate-dek code, .diagram-caption code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--code-bg);
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  color: var(--amber-deep);
+}
+
+.callout {
+  border-left: 3px solid var(--amber);
+  background: var(--panel);
+  border-radius: 0 8px 8px 0;
+  padding: 0.9rem 1.1rem;
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+  max-width: 68ch;
+}
+.callout b { color: var(--ink); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.3rem; font-size: 0.8rem; color: var(--stone); }
+.legend .sw { display: inline-flex; align-items: center; gap: 0.4rem; }
+.legend .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+footer {
+  border-top: 1px solid var(--line);
+  padding-top: 1.6rem;
+  font-size: 0.8rem;
+  color: var(--stone);
+  font-family: var(--mono);
+}
+
+svg text { font-family: var(--sans); }
+svg .mono { font-family: var(--mono); }
+svg .serif { font-family: var(--serif); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .plate { animation: rise 0.5s ease both; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <span class="eyebrow">AuraMatch AI &middot; Engineering Reference</span>
+    <h1>How the match actually <em>happens</em></h1>
+    <p class="dek">Four diagrams covering the system as it runs today: the container topology, one request's full path from browser to response, the tables and indexes underneath it, and the pipeline that turns a wide candidate pool into a short, diverse, explainable list.</p>
+    <div class="meta-row">
+      <span><b>Stack</b> Next.js 16 &middot; FastAPI &middot; PostgreSQL 16 + pgvector</span>
+      <span><b>Scale</b> ~40,600 perfumes</span>
+      <span><b>Tests</b> 287 passing</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Diagram index">
+    <a href="#topology"><span class="n">01</span> System Topology</a>
+    <a href="#lifecycle"><span class="n">02</span> Request Lifecycle</a>
+    <a href="#data-model"><span class="n">03</span> Data Model &amp; Indexes</a>
+    <a href="#pipeline"><span class="n">04</span> Scoring &amp; Diversity Pipeline</a>
+  </nav>
+
+  <!-- ============================================================ -->
+  <!-- PLATE 1 — SYSTEM TOPOLOGY                                     -->
+  <!-- ============================================================ -->
+  <section class="plate" id="topology">
+    <div class="plate-head">
+      <span class="plate-num">Plate 01</span>
+      <h2>System Topology</h2>
+      <p class="plate-dek">Three containers on one Docker bridge network, address each other by service name (never <code>localhost</code>). Groq sits outside the network entirely — an optional HTTPS call, not a dependency.</p>
+    </div>
+
+    <div class="diagram-frame">
+      <div class="diagram-scroll">
+        <svg viewBox="0 0 960 580" width="960" height="580" role="img" aria-label="Docker network topology diagram">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--amber-deep)"></path>
+            </marker>
+            <marker id="arrowExt" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ext)"></path>
+            </marker>
+          </defs>
+
+          <!-- client -->
+          <rect x="380" y="20" width="200" height="58" rx="10" fill="var(--bone)" stroke="var(--line-strong)" stroke-width="1.5"></rect>
+          <text x="480" y="44" text-anchor="middle" font-size="14" font-weight="600" fill="var(--ink)">Browser Client</text>
+          <text x="480" y="62" text-anchor="middle" font-size="11.5" fill="var(--stone)" class="mono">Next.js client components</text>
+
+          <line x1="480" y1="78" x2="480" y2="108" stroke="var(--amber-deep)" stroke-width="1.6" marker-end="url(#arrow)"></line>
+
+          <!-- network boundary -->
+          <rect x="40" y="108" width="880" height="342" rx="16" fill="none" stroke="var(--stone)" stroke-width="1.4" stroke-dasharray="5 5"></rect>
+          <text x="62" y="132" font-size="12" fill="var(--stone)" class="mono">docker compose &middot; network &ldquo;auramatch_net&rdquo; (bridge)</text>
+
+          <!-- frontend -->
+          <rect x="70" y="168" width="230" height="242" rx="10" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.3"></rect>
+          <text x="185" y="196" text-anchor="middle" font-size="15" font-weight="700" fill="var(--amber-deep)">frontend</text>
+          <text x="185" y="215" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">Next.js 16 &middot; React 19 &middot; TS</text>
+          <line x1="90" y1="228" x2="280" y2="228" stroke="var(--line)" stroke-width="1"></line>
+          <text x="185" y="250" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">container port 3000</text>
+          <text x="185" y="268" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">host 3000 &rarr; 3000</text>
+          <text x="185" y="292" text-anchor="middle" font-size="11" fill="var(--ink-soft)">runs as non-root user</text>
+          <text x="185" y="308" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">nextjs</text>
+          <text x="185" y="336" text-anchor="middle" font-size="11" fill="var(--ink-soft)">serves /, /search,</text>
+          <text x="185" y="352" text-anchor="middle" font-size="11" fill="var(--ink-soft)">/perfume/[id], /admin</text>
+
+          <!-- backend -->
+          <rect x="340" y="168" width="280" height="242" rx="10" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.3"></rect>
+          <text x="480" y="196" text-anchor="middle" font-size="15" font-weight="700" fill="var(--amber-deep)">backend</text>
+          <text x="480" y="215" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">FastAPI &middot; Python 3.11</text>
+          <line x1="360" y1="228" x2="600" y2="228" stroke="var(--line)" stroke-width="1"></line>
+          <text x="480" y="250" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">container port 8000</text>
+          <text x="480" y="268" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">host 8000 &rarr; 8000</text>
+          <text x="480" y="292" text-anchor="middle" font-size="11" fill="var(--ink-soft)">runs as non-root: appuser</text>
+          <line x1="360" y1="304" x2="600" y2="304" stroke="var(--line)" stroke-width="1"></line>
+          <text x="480" y="322" text-anchor="middle" font-size="10.5" fill="var(--stone)">in-process: asyncpg pool &middot; SentenceTransformer</text>
+          <text x="480" y="338" text-anchor="middle" font-size="10.5" fill="var(--stone)">token-bucket limiter &middot; Groq circuit breaker</text>
+          <text x="480" y="360" text-anchor="middle" font-size="11" fill="var(--ink-soft)">alembic upgrade head on boot,</text>
+          <text x="480" y="376" text-anchor="middle" font-size="11" fill="var(--ink-soft)">before uvicorn starts</text>
+
+          <!-- db -->
+          <rect x="660" y="168" width="230" height="242" rx="10" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.3"></rect>
+          <text x="775" y="196" text-anchor="middle" font-size="15" font-weight="700" fill="var(--amber-deep)">db</text>
+          <text x="775" y="215" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">PostgreSQL 16</text>
+          <line x1="680" y1="228" x2="870" y2="228" stroke="var(--line)" stroke-width="1"></line>
+          <text x="775" y="250" text-anchor="middle" font-size="11" fill="var(--ink-soft)">+ pgvector, pg_trgm</text>
+          <text x="775" y="272" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">container port 5432</text>
+          <text x="775" y="290" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">host 5434 &rarr; 5432</text>
+          <text x="775" y="314" text-anchor="middle" font-size="11" fill="var(--ink-soft)">volume:</text>
+          <text x="775" y="330" text-anchor="middle" font-size="11" class="mono" fill="var(--stone)">pgvector_data</text>
+          <text x="775" y="354" text-anchor="middle" font-size="11" fill="var(--ink-soft)">healthcheck gates</text>
+          <text x="775" y="370" text-anchor="middle" font-size="11" fill="var(--ink-soft)">backend startup</text>
+
+          <!-- arrows between containers -->
+          <line x1="300" y1="288" x2="338" y2="288" stroke="var(--amber-deep)" stroke-width="1.6" marker-end="url(#arrow)"></line>
+          <text x="319" y="270" text-anchor="middle" font-size="9" fill="var(--stone)">HTTP</text>
+          <text x="319" y="316" text-anchor="middle" font-size="9" fill="var(--stone)">+ key</text>
+
+          <line x1="620" y1="288" x2="658" y2="288" stroke="var(--amber-deep)" stroke-width="1.6" marker-end="url(#arrow)"></line>
+          <text x="639" y="270" text-anchor="middle" font-size="9" fill="var(--stone)">asyncpg</text>
+          <text x="639" y="316" text-anchor="middle" font-size="9" fill="var(--stone)">(TCP)</text>
+
+          <!-- external groq -->
+          <rect x="700" y="478" width="220" height="72" rx="10" fill="none" stroke="var(--ext)" stroke-width="1.4" stroke-dasharray="4 4"></rect>
+          <text x="810" y="504" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ext)">Groq Cloud API</text>
+          <text x="810" y="521" text-anchor="middle" font-size="10.5" fill="var(--stone)">Llama 3 &middot; optional</text>
+          <text x="810" y="538" text-anchor="middle" font-size="10.5" fill="var(--stone)">outside auramatch_net</text>
+
+          <path d="M 480 410 C 480 450, 700 440, 790 476" fill="none" stroke="var(--ext)" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arrowExt)"></path>
+          <text x="640" y="440" text-anchor="middle" font-size="10" fill="var(--ext)">HTTPS, circuit-broken</text>
+
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span><b>Solid line</b> — required, in-network call</span>
+        <span><b>Dashed line</b> — optional, external call</span>
+        <span>Only <code>frontend</code> is meant to be public-facing in a hardened deployment; today all three ports are published for local review.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PLATE 2 — REQUEST LIFECYCLE                                   -->
+  <!-- ============================================================ -->
+  <section class="plate" id="lifecycle">
+    <div class="plate-head">
+      <span class="plate-num">Plate 02</span>
+      <h2>Request Lifecycle</h2>
+      <p class="plate-dek">One <code>POST /api/v1/search/context</code> call, start to finish. Every request passes through auth and rate-limiting before business logic ever runs; the LLM step is the only one that's skippable without changing the response shape.</p>
+    </div>
+
+    <div class="diagram-frame">
+      <div class="diagram-scroll">
+        <svg viewBox="0 0 900 900" width="900" height="900" role="img" aria-label="Request lifecycle sequence diagram">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--line-strong)"></path>
+            </marker>
+          </defs>
+
+          <line x1="42" y1="46" x2="42" y2="826" stroke="var(--line-strong)" stroke-width="1.6"></line>
+
+          <!-- row template: circle at (42,Y), card at (70,Y-26,810,64) -->
+          <!-- 1 -->
+          <circle cx="42" cy="46" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="51" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">1</text>
+          <rect x="70" y="20" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="42" font-size="13" font-weight="700" fill="var(--ink)">Client request</text>
+          <text x="90" y="60" font-size="11.5" fill="var(--ink-soft)"><tspan class="mono">POST /api/v1/search/context</tspan> — body + <tspan class="mono">X-API-Key</tspan> header</text>
+
+          <!-- 2 -->
+          <circle cx="42" cy="120" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="125" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">2</text>
+          <rect x="70" y="94" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="116" font-size="13" font-weight="700" fill="var(--ink)">request_logging_middleware</text>
+          <text x="90" y="134" font-size="11.5" fill="var(--ink-soft)">assigns request ID (<tspan class="mono">ContextVar</tspan>), starts the latency timer &middot; <tspan class="mono">app/main.py</tspan></text>
+
+          <!-- 3 -->
+          <circle cx="42" cy="194" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="199" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">3</text>
+          <rect x="70" y="168" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="190" font-size="13" font-weight="700" fill="var(--ink)">require_api_key</text>
+          <text x="90" y="208" font-size="11.5" fill="var(--ink-soft)">key hash lookup, <tspan class="mono">Origin</tspan> allowlist (publishable), token-bucket rate limit &middot; <tspan class="mono">app/api/auth.py</tspan></text>
+
+          <!-- 4 -->
+          <circle cx="42" cy="268" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="273" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">4</text>
+          <rect x="70" y="242" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="264" font-size="13" font-weight="700" fill="var(--ink)">routes_search.py</text>
+          <text x="90" y="282" font-size="11.5" fill="var(--ink-soft)">resolves dupe intent + reference perfume, budget, gender, scenarios from the request</text>
+
+          <!-- 5 -->
+          <circle cx="42" cy="342" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="347" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">5</text>
+          <rect x="70" y="316" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="338" font-size="13" font-weight="700" fill="var(--ink)">intent_detector.py</text>
+          <text x="90" y="356" font-size="11.5" fill="var(--ink-soft)">regex/keyword pass over raw text: gender, budget, longevity, sillage, negated terms</text>
+
+          <!-- 6 -->
+          <circle cx="42" cy="416" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="421" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">6</text>
+          <rect x="70" y="390" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="412" font-size="13" font-weight="700" fill="var(--ink)">ml_engine.py</text>
+          <text x="90" y="430" font-size="11.5" fill="var(--ink-soft)">encodes query text &rarr; 384-dim vector, <tspan class="mono">all-MiniLM-L6-v2</tspan>, off the event loop (thread pool)</text>
+
+          <!-- 7 -->
+          <circle cx="42" cy="490" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="495" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">7</text>
+          <rect x="70" y="464" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="486" font-size="13" font-weight="700" fill="var(--ink)">db_repository.py</text>
+          <text x="90" y="504" font-size="11.5" fill="var(--ink-soft)">HNSW cosine search + GIN array/negation filters + hard gender exclude &rarr; candidate pool (&le;1000)</text>
+
+          <!-- 8 -->
+          <circle cx="42" cy="564" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="569" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">8</text>
+          <rect x="70" y="538" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="560" font-size="13" font-weight="700" fill="var(--ink)">decision_engine.py — score + cap (phase 1)</text>
+          <text x="90" y="578" font-size="11.5" fill="var(--ink-soft)">scores every candidate, then <tspan class="mono">cap_per_brand</tspan> &rarr; <tspan class="mono">cap_by_scent_character</tspan>, both strict</text>
+
+          <!-- 9 optional, dashed connector -->
+          <line x1="42" y1="612" x2="42" y2="638" stroke="var(--line-strong)" stroke-width="1.6" stroke-dasharray="3 4"></line>
+          <circle cx="42" cy="654" r="15" fill="none" stroke="var(--ext)" stroke-width="1.6" stroke-dasharray="2 3"></circle>
+          <text x="42" y="659" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ext)">9</text>
+          <rect x="70" y="628" width="810" height="56" rx="8" fill="var(--bone)" stroke="var(--ext)" stroke-width="1.3" stroke-dasharray="4 4"></rect>
+          <text x="90" y="650" font-size="13" font-weight="700" fill="var(--ext)">circuit_breaker &rarr; llm_enrichment.py &rarr; Groq (optional)</text>
+          <text x="90" y="668" font-size="11.5" fill="var(--ink-soft)">re-ranks + explains top picks &middot; skipped instantly if breaker is OPEN or no key configured</text>
+          <line x1="42" y1="669" x2="42" y2="716" stroke="var(--line-strong)" stroke-width="1.6" stroke-dasharray="3 4"></line>
+
+          <!-- 10 -->
+          <circle cx="42" cy="732" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="737" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">10</text>
+          <rect x="70" y="706" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="728" font-size="13" font-weight="700" fill="var(--ink)">decision_engine.py — explain + final cap (phase 2)</text>
+          <text x="90" y="746" font-size="11.5" fill="var(--ink-soft)">builds <tspan class="mono">match_breakdown</tspan> only for the returned slice; final backfilled <tspan class="mono">cap_per_brand(limit)</tspan></text>
+
+          <!-- 11 -->
+          <circle cx="42" cy="806" r="15" fill="var(--amber)"></circle>
+          <text x="42" y="811" text-anchor="middle" font-size="12" font-weight="700" fill="var(--bone)">11</text>
+          <rect x="70" y="780" width="810" height="56" rx="8" fill="var(--panel-2)" stroke="var(--line)"></rect>
+          <text x="90" y="802" font-size="13" font-weight="700" fill="var(--ink)">Response</text>
+          <text x="90" y="820" font-size="11.5" fill="var(--ink-soft)"><tspan class="mono">perfumes[]</tspan> incl. <tspan class="mono">has_limited_data</tspan> &middot; middleware records latency + <tspan class="mono">X-Request-ID</tspan> header</text>
+
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span class="legend">
+          <span class="sw"><span class="dot" style="background:var(--amber)"></span> always runs</span>
+          <span class="sw"><span class="dot" style="background:var(--ext); opacity:0.6"></span> optional / skippable</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="callout">Step 8 runs on the <b>full</b> candidate pool with cheap, numeric-only scoring; step 10 only builds the expensive explanation text for whatever survives truncation. That split exists because the ANN pool width was recently widened 5–20&times; — explaining every candidate before truncating used to be the slow path.</div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PLATE 3 — DATA MODEL -->
+  <!-- ============================================================ -->
+  <section class="plate" id="data-model">
+    <div class="plate-head">
+      <span class="plate-num">Plate 03</span>
+      <h2>Data Model &amp; Indexes</h2>
+      <p class="plate-dek">Two tables carry the whole system: the catalog, and the keys that gate access to it. Three index types on <code>perfumes</code> exist for three unrelated query shapes — nearest-neighbor, array containment, and fuzzy text.</p>
+    </div>
+
+    <div class="diagram-frame">
+      <div class="diagram-scroll">
+        <svg viewBox="0 0 900 620" width="900" height="620" role="img" aria-label="Data model diagram with perfumes and api_keys tables and their indexes">
+          <!-- perfumes table -->
+          <rect x="20" y="30" width="400" height="470" rx="10" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.3"></rect>
+          <rect x="20" y="30" width="400" height="40" rx="10" fill="var(--amber-deep)"></rect>
+          <rect x="20" y="55" width="400" height="15" fill="var(--amber-deep)"></rect>
+          <text x="40" y="56" font-size="14" font-weight="700" fill="var(--bone)">perfumes</text>
+          <text x="410" y="56" text-anchor="end" font-size="10.5" fill="var(--bone)" opacity="0.85">~40,600 rows</text>
+
+          <g class="mono" font-size="12">
+            <text x="40" y="92" fill="var(--ink)">id</text><text x="230" y="92" fill="var(--stone)">serial, primary key</text>
+            <text x="40" y="114" fill="var(--ink)">brand, perfume</text><text x="230" y="114" fill="var(--stone)">text</text>
+            <text x="40" y="136" fill="var(--ink)">normalized_key</text><text x="230" y="136" fill="var(--stone)">text — dedup key</text>
+            <text x="40" y="158" fill="var(--ink)">main_accords</text><text x="230" y="158" fill="var(--stone)">text[]</text>
+            <text x="40" y="180" fill="var(--ink)">notes</text><text x="230" y="180" fill="var(--stone)">text[]</text>
+            <text x="40" y="202" fill="var(--ink)">top/heart/base_notes</text><text x="230" y="202" fill="var(--stone)">text[]</text>
+            <text x="40" y="224" fill="var(--ink)">price_inr</text><text x="230" y="224" fill="var(--stone)">numeric</text>
+            <text x="40" y="246" fill="var(--ink)">gender, type</text><text x="230" y="246" fill="var(--stone)">text</text>
+            <text x="40" y="268" fill="var(--ink)">longevity_score</text><text x="230" y="268" fill="var(--stone)">float</text>
+            <text x="40" y="290" fill="var(--ink)">sillage_score</text><text x="230" y="290" fill="var(--stone)">float</text>
+            <text x="40" y="312" fill="var(--amber)">embedding</text><text x="230" y="312" fill="var(--stone)">vector(384)</text>
+            <text x="40" y="334" fill="var(--ink)">source</text><text x="230" y="334" fill="var(--stone)">text</text>
+            <text x="40" y="356" fill="var(--ink)">source_priority</text><text x="230" y="356" fill="var(--stone)">smallint</text>
+            <text x="40" y="378" fill="var(--ink)">country, perfumer, url</text><text x="230" y="378" fill="var(--stone)">text</text>
+          </g>
+
+          <line x1="40" y1="398" x2="400" y2="398" stroke="var(--line)" stroke-width="1"></line>
+          <text x="40" y="420" font-size="11" fill="var(--stone)">derived at read time, not stored:</text>
+          <text x="40" y="440" font-size="11.5" class="mono" fill="var(--warn)">has_limited_data</text>
+          <text x="175" y="440" font-size="11" fill="var(--stone)">true when notes = [] after cleaning</text>
+          <text x="40" y="460" font-size="11.5" class="mono" fill="var(--warn)">top/heart/base_notes</text>
+          <text x="40" y="478" font-size="11" fill="var(--stone)">(fallback) classified from accords when the real columns are still NULL</text>
+
+          <!-- index callouts on the right of perfumes -->
+          <path d="M 422 312 C 440 312, 440 312, 460 312" fill="none" stroke="var(--amber)" stroke-width="1.3"></path>
+          <rect x="462" y="284" width="418" height="58" rx="8" fill="var(--bone)" stroke="var(--amber)" stroke-width="1.2"></rect>
+          <text x="480" y="304" font-size="12" font-weight="700" fill="var(--amber)">HNSW index &middot; embedding</text>
+          <text x="480" y="322" font-size="10.5" fill="var(--ink-soft)">vector_cosine_ops &middot; m=16, ef_construction=200</text>
+          <text x="480" y="336" font-size="10.5" fill="var(--stone)">logarithmic ANN search, not a full sequential scan</text>
+
+          <path d="M 422 158 C 440 158, 440 178, 460 178" fill="none" stroke="var(--amber)" stroke-width="1.3"></path>
+          <path d="M 422 180 C 440 180, 440 178, 460 190" fill="none" stroke="var(--amber)" stroke-width="1.3"></path>
+          <rect x="462" y="150" width="418" height="58" rx="8" fill="var(--bone)" stroke="var(--amber)" stroke-width="1.2"></rect>
+          <text x="480" y="170" font-size="12" font-weight="700" fill="var(--amber)">GIN indexes &middot; notes, main_accords</text>
+          <text x="480" y="188" font-size="10.5" fill="var(--ink-soft)">array containment (<tspan class="mono">&amp;&amp;</tspan>) in O(log N)</text>
+          <text x="480" y="202" font-size="10.5" fill="var(--stone)">powers negated-notes exclusion pushdown</text>
+
+          <path d="M 422 114 C 440 114, 440 64, 460 64" fill="none" stroke="var(--amber)" stroke-width="1.3"></path>
+          <rect x="462" y="36" width="418" height="58" rx="8" fill="var(--bone)" stroke="var(--amber)" stroke-width="1.2"></rect>
+          <text x="480" y="56" font-size="12" font-weight="700" fill="var(--amber)">GIN trigram (pg_trgm) &middot; brand, perfume</text>
+          <text x="480" y="74" font-size="10.5" fill="var(--ink-soft)">index-accelerated <tspan class="mono">word_similarity</tspan></text>
+          <text x="480" y="88" font-size="10.5" fill="var(--stone)">typo-tolerant reference-perfume lookup</text>
+
+          <!-- api_keys table -->
+          <rect x="462" y="360" width="418" height="230" rx="10" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.3"></rect>
+          <rect x="462" y="360" width="418" height="40" rx="10" fill="var(--ink-soft)"></rect>
+          <rect x="462" y="385" width="418" height="15" fill="var(--ink-soft)"></rect>
+          <text x="482" y="386" font-size="14" font-weight="700" fill="var(--bone)">api_keys</text>
+
+          <g class="mono" font-size="11.5">
+            <text x="482" y="422" fill="var(--ink)">id</text><text x="672" y="422" fill="var(--stone)">serial, primary key</text>
+            <text x="482" y="444" fill="var(--ink)">key_hash</text><text x="672" y="444" fill="var(--stone)">sha256, unique</text>
+            <text x="482" y="466" fill="var(--ink)">key_type</text><text x="672" y="466" fill="var(--stone)">publishable|secret</text>
+            <text x="482" y="488" fill="var(--ink)">origin_allowlist</text><text x="672" y="488" fill="var(--stone)">text[]</text>
+            <text x="482" y="510" fill="var(--ink)">rate_limit_per_minute</text><text x="672" y="510" fill="var(--stone)">int</text>
+            <text x="482" y="532" fill="var(--ink)">revoked_at</text><text x="672" y="532" fill="var(--stone)">timestamptz, null</text>
+          </g>
+          <text x="482" y="562" font-size="10.5" fill="var(--stone)">raw key shown once at issuance,</text>
+          <text x="482" y="577" font-size="10.5" fill="var(--stone)">never recoverable after &mdash; only the hash persists.</text>
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span><b>Amber annotations</b> — index, not a column</span>
+        <span><b>Gold text</b> — computed in Python at read time, never written to disk</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PLATE 4 — SCORING & DIVERSITY PIPELINE                        -->
+  <!-- ============================================================ -->
+  <section class="plate" id="pipeline">
+    <div class="plate-head">
+      <span class="plate-num">Plate 04</span>
+      <h2>Scoring &amp; Diversity Pipeline</h2>
+      <p class="plate-dek">How a candidate pool of up to a thousand rows narrows to the handful actually shown — and why it narrows in this specific order.</p>
+    </div>
+
+    <div class="diagram-frame">
+      <div class="diagram-scroll">
+        <svg viewBox="0 0 860 850" width="860" height="850" role="img" aria-label="Scoring and diversity capping funnel diagram">
+          <defs>
+            <marker id="arrowDown" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L5,10 L10,0 z" fill="var(--line-strong)"></path>
+            </marker>
+          </defs>
+
+          <!-- stage shapes: wide trapezoid narrowing downward -->
+          <!-- stage A -->
+          <polygon points="60,20 800,20 770,86 90,86" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.3"></polygon>
+          <text x="430" y="46" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">ANN + SQL filters</text>
+          <text x="430" y="65" text-anchor="middle" font-size="11" fill="var(--ink-soft)">HNSW cosine search, gender hard-exclude, negated-note GIN exclude</text>
+          <text x="430" y="80" text-anchor="middle" font-size="10.5" class="mono" fill="var(--stone)">pool &le; 1,000 candidates</text>
+          <line x1="430" y1="86" x2="430" y2="108" stroke="var(--line-strong)" stroke-width="1.6" marker-end="url(#arrowDown)"></line>
+
+          <!-- stage B -->
+          <polygon points="90,108 770,108 745,168 115,168" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.3"></polygon>
+          <text x="430" y="132" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">Score every candidate (phase 1)</text>
+          <text x="430" y="151" text-anchor="middle" font-size="11" fill="var(--ink-soft)">sim, notes, scenario, longevity, gender, price, age, family, bridge — active signals only</text>
+          <line x1="430" y1="168" x2="430" y2="190" stroke="var(--line-strong)" stroke-width="1.6" marker-end="url(#arrowDown)"></line>
+
+          <!-- stage C -->
+          <polygon points="115,190 745,190 720,250 140,250" fill="var(--panel-2)" stroke="var(--amber)" stroke-width="1.4"></polygon>
+          <text x="430" y="214" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--amber-deep)">cap_per_brand — strict, wide pool</text>
+          <text x="430" y="233" text-anchor="middle" font-size="11" fill="var(--ink-soft)">max 2 per brand, no backfill — keeps the pool diverse before the LLM sees it</text>
+          <line x1="430" y1="250" x2="430" y2="272" stroke="var(--line-strong)" stroke-width="1.6" marker-end="url(#arrowDown)"></line>
+
+          <!-- stage D -->
+          <polygon points="140,272 720,272 695,332 165,332" fill="var(--panel-2)" stroke="var(--amber)" stroke-width="1.4"></polygon>
+          <text x="430" y="296" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--amber-deep)">cap_by_scent_character — strict, wide pool</text>
+          <text x="430" y="315" text-anchor="middle" font-size="11" fill="var(--ink-soft)">max 3 per dominant accord &middot; skipped entirely for dupe/reference queries</text>
+          <line x1="430" y1="332" x2="430" y2="442" stroke="var(--line-strong)" stroke-width="1.6" marker-end="url(#arrowDown)"></line>
+
+          <!-- safety net side note (sits beside stage D, above stage E - no y-overlap with either) -->
+          <rect x="600" y="272" width="230" height="150" rx="8" fill="var(--bone)" stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 4"></rect>
+          <text x="715" y="294" text-anchor="middle" font-size="11" font-weight="700" fill="var(--warn)">pre_diversity_results</text>
+          <text x="715" y="312" text-anchor="middle" font-size="10" fill="var(--ink-soft)">snapshot kept from just before</text>
+          <text x="715" y="326" text-anchor="middle" font-size="10" fill="var(--ink-soft)">the strict accord cap runs</text>
+          <text x="715" y="350" text-anchor="middle" font-size="10" fill="var(--ink-soft)">used to backfill the final</text>
+          <text x="715" y="364" text-anchor="middle" font-size="10" fill="var(--ink-soft)">result if a scent-homogeneous</text>
+          <text x="715" y="378" text-anchor="middle" font-size="10" fill="var(--ink-soft)">pool ever underfills the</text>
+          <text x="715" y="392" text-anchor="middle" font-size="10" fill="var(--ink-soft)">requested limit</text>
+          <text x="715" y="412" text-anchor="middle" font-size="9.5" fill="var(--warn)">real bug this fixed — not hypothetical</text>
+
+          <!-- stage E optional -->
+          <rect x="165" y="442" width="530" height="66" rx="10" fill="var(--bone)" stroke="var(--ext)" stroke-width="1.3" stroke-dasharray="4 4"></rect>
+          <text x="430" y="468" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ext)">Groq LLM re-rank (optional, top 30 only)</text>
+          <text x="430" y="487" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">circuit-broken &middot; skipped instantly on an open breaker or missing key</text>
+          <line x1="430" y1="508" x2="430" y2="530" stroke="var(--line-strong)" stroke-width="1.6" marker-end="url(#arrowDown)"></line>
+
+          <!-- stage F -->
+          <polygon points="165,530 695,530 660,590 200,590" fill="var(--panel-2)" stroke="var(--amber)" stroke-width="1.4"></polygon>
+          <text x="430" y="554" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--amber-deep)">cap_per_brand — final, backfilled</text>
+          <text x="430" y="573" text-anchor="middle" font-size="11" fill="var(--ink-soft)">relaxes the cap only as a last resort, at the real <tspan class="mono">req.limit</tspan></text>
+          <line x1="430" y1="590" x2="430" y2="612" stroke="var(--line-strong)" stroke-width="1.6" marker-end="url(#arrowDown)"></line>
+
+          <!-- stage G -->
+          <polygon points="200,612 660,612 630,668 230,668" fill="var(--panel-2)" stroke="var(--warn)" stroke-width="1.3"></polygon>
+          <text x="430" y="636" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--warn)">backfill from pre_diversity_results, if still short</text>
+          <text x="430" y="654" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">only reachable if the diversity caps alone couldn't fill the limit</text>
+          <line x1="430" y1="668" x2="430" y2="690" stroke="var(--line-strong)" stroke-width="1.6" marker-end="url(#arrowDown)"></line>
+
+          <!-- stage H response -->
+          <rect x="255" y="690" width="350" height="66" rx="10" fill="var(--panel-2)" stroke="var(--line-strong)" stroke-width="1.4"></rect>
+          <text x="430" y="716" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">Response</text>
+          <text x="430" y="735" text-anchor="middle" font-size="11" fill="var(--ink-soft)">&le; req.limit results, each with match_breakdown + has_limited_data</text>
+
+          <text x="430" y="788" text-anchor="middle" font-size="11" fill="var(--stone)">Narrows top to bottom &middot; width is illustrative, not to scale</text>
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span><b>Amber border</b> — a diversity cap (shares one implementation, <code>_cap_by_key</code>)</span>
+        <span><b>Dashed border</b> — optional / conditional stage</span>
+        <span><b>Gold border</b> — a safety net added after a real under-fill bug was found live</span>
+      </div>
+    </div>
+
+    <div class="callout">The two strict caps (C, D) run <b>before</b> the LLM sees anything, deliberately not backfilled at that stage — relaxing the cap to fill a wide pool would let an over-represented brand or accord climb right back up before diversity ever mattered. The final cap (F) is the opposite: backfilled, because a response shorter than requested is a worse outcome than a little repetition.</div>
+  </section>
+
+  <footer>
+    AuraMatch AI &middot; architecture reference generated from the codebase as of the latest reviewed commit &middot; see the prose guides in <span class="mono">documentation/</span> for full rationale behind every box on this page.
+  </footer>
+
+</div>
+</body>
+</html>
