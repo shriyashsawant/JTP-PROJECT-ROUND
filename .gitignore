@@ -93,3 +93,15 @@ DA_Fragrance_Analysis-main/
 
 # Local data sources
 backend/data_sources_local/
+
+# Reference/planning docs and orphaned scaffolding - not part of the shipped
+# project, kept locally for provenance only. See README.md/documentation/ for
+# the actual, current, authoritative docs.
+/PRD
+/Problem_Statement.txt
+/ARCHITECTURE_GUIDE.md
+/Links_and _website.txt
+/note_analysis.json
+/skills-lock.json
+/package.json
+/package-lock.json
