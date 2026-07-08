@@ -61,6 +61,19 @@ def upgrade() -> None:
     )
     op.create_index("idx_api_keys_key_hash", "api_keys", ["key_hash"])
 
+    # Seed the default publishable API key baked into docker-compose.yml so frontend works out of the box
+    op.execute(
+        "INSERT INTO api_keys (key_prefix, key_hash, label, key_type, allowed_origins, rate_limit_per_minute) "
+        "VALUES ("
+        "    'pk_live_f3o8', "
+        "    '7040d4482859ffb04f1ed6653608bbd6f4f4ed7b07bcde3275e37f5fcea3f536', "
+        "    'Default Web Frontend', "
+        "    'publishable', "
+        "    ARRAY['http://localhost:3000'], "
+        "    1000"
+        ") ON CONFLICT DO NOTHING"
+    )
+
 
 def downgrade() -> None:
     op.drop_index("idx_api_keys_key_hash", table_name="api_keys")
