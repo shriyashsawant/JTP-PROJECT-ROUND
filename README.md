@@ -1,5 +1,17 @@
 # AuraMatch AI - Olfactory Matching & Suggestion Platform
 
+## Project Submission Deliverables
+
+To ensure consistency in the evaluation process per the JTP submission guidelines, the core deliverables are linked below:
+
+| Deliverable | Contents |
+| :--- | :--- |
+| **[Installation & Setup Guide](INSTALLATION_GUIDE.md)** | Step-by-step instructions for running the application using Docker Compose, configuring environment files, and seeding the database. |
+| **[User Manual](USER_MANUAL.md)** | Guide to navigating the Vibe Check, Dupe Finder, and scent pyramids, plus accessing the Developer Metrics Dashboard. |
+| **[Project Documentation Hub](documentation/README.md)** | Technical specifications, engineering details, testing blueprints, and API key setup. |
+
+---
+
 AuraMatch AI is a semantic fragrance matching and recommendation application. It translates natural language context (such as, "I need a fresh summer scent for the office commute that projects well") into high-dimensional vector embeddings, conducting similarity queries against a database of over 40,000 scents to identify optimal fragrance choices and budget-friendly alternatives.
 
 ---

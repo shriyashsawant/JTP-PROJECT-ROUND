@@ -9,25 +9,31 @@ Welcome to the engineering documentation hub for AuraMatch AI. This documentatio
 ### 1.0 [Architecture Diagrams (visual)](architecture-diagram.html)
 * System topology, request lifecycle, data model, and the scoring/diversity pipeline - illustrated, for a faster first read than the prose guides below. Open the linked HTML file directly in a browser (no server needed); static copies of all four plates are also embedded in the root [README.md](../README.md).
 
-### 1.1 [System Architecture](SYSTEM_ARCHITECTURE.md)
+### 1.1 [Installation Guide](../INSTALLATION_GUIDE.md)
+* Detailed step-by-step instructions on setting up and running the application (using Docker Compose or local host setups), environment files configuration, and database seeding details.
+
+### 1.2 [User Manual](../USER_MANUAL.md)
+* Complete guide explaining how to navigate the Vibe Check Chat, Dupe Engine, read the Scent Detail Cards, use the Developer Dashboard, and issue API keys.
+
+### 1.3 [System Architecture](SYSTEM_ARCHITECTURE.md)
 * Detailed description of system components, database schemas, pgvector indices, Next.js page layouts, and Docker containers.
 
-### 1.2 [Decision & Scoring Engine](DECISION_ENGINE.md)
+### 1.4 [Decision & Scoring Engine](DECISION_ENGINE.md)
 * In-depth documentation of the olfactory matching algorithms, hybrid scoring formulas, scenario maps, negation boundary logic, chemical bridge matches, sillage/longevity concentration scaling, and unisex gender modifiers.
 
-### 1.3 [Data Ingestion & Migration Pipeline](DATA_INGESTION_PIPELINE.md)
+### 1.5 [Data Ingestion & Migration Pipeline](DATA_INGESTION_PIPELINE.md)
 * Explanation of database migrations (Alembic), input boundary contracts, validation filters, case-insensitive duplicate lookups, source-priority updates, and db backup processes.
 
-### 1.4 [Frontend Architecture](FRONTEND_ARCHITECTURE.md)
+### 1.6 [Frontend Architecture](FRONTEND_ARCHITECTURE.md)
 * Page-by-page walkthrough, the conversational clarification flow, state management (`localStorage`-based multi-conversation persistence), API integration (typed error handling, API key wiring), and the UI decisions behind the result cards and scent pyramid.
 
-### 1.5 [Quality Assurance, Testing & Observability](TESTING_AND_OBSERVABILITY.md)
+### 1.7 [Quality Assurance, Testing & Observability](TESTING_AND_OBSERVABILITY.md)
 * System test coverage, database connection doubles, API mocks, logging middleware, performance tracking, and the observability metrics roadmap.
 
-### 1.6 [Third-Party API Integration Guide](THIRD_PARTY_API.md)
+### 1.8 [Third-Party API Integration Guide](THIRD_PARTY_API.md)
 * Two-tier API key model (publishable vs. secret), token-bucket rate limiting, error format, key issuance, and the `/api/v1` versioning commitment.
 
-### 1.7 [Groq LLM Setup & Configuration Guide](GROQ_SETUP.md)
+### 1.9 [Groq LLM Setup & Configuration Guide](GROQ_SETUP.md)
 * How to obtain, configure, and verify the optional Groq API key for fail-safe LLM re-ranking.
 
 ---
