@@ -124,3 +124,5 @@ cd backend
 python scripts/issue_api_key.py --type secret --label "manual testing" --rate-limit 300
 ```
 This prints a raw key once (save it - it can't be recovered afterward). Send it as `X-API-Key: <key>` on each request. Full details - the publishable-vs-secret key model, rate limits, and error format - are in [documentation/THIRD_PARTY_API.md](documentation/THIRD_PARTY_API.md).
+
+
