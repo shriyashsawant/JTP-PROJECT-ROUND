@@ -105,7 +105,7 @@ To call `/api/v1/search/context`, `/api/v1/search/dupe`, or `/api/v1/perfume/{id
   docker compose exec backend python scripts/issue_api_key.py --type secret --label "Evaluator API Key" --rate-limit 300
   ```
 
-Copy the printed key and pass it in the `X-API-Key` header. See [`documentation/THIRD_PARTY_API.md`](documentation/THIRD_PARTY_API.md) for the full key model and rate-limit details.
+Copy the printed key and pass it in the `X-API-Key` header. See [`THIRD_PARTY_API.md`](THIRD_PARTY_API.md) for the full key model and rate-limit details.
 
 > **Important:** the key is only printed once at creation time and cannot be recovered afterward — copy it somewhere safe immediately.
 

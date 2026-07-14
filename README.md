@@ -6,8 +6,8 @@ To ensure consistency in the evaluation process per the JTP submission guideline
 
 | Deliverable | Contents |
 | :--- | :--- |
-| **[Installation & Setup Guide](INSTALLATION_GUIDE.md)** | Step-by-step instructions for running the application using Docker Compose, configuring environment files, and seeding the database. |
-| **[User Manual](USER_MANUAL.md)** | Guide to navigating the Vibe Check, Dupe Finder, and scent pyramids, plus accessing the Developer Metrics Dashboard. |
+| **[Installation & Setup Guide](documentation/INSTALLATION_GUIDE.md)** | Step-by-step instructions for running the application using Docker Compose, configuring environment files, and seeding the database. |
+| **[User Manual](documentation/USER_MANUAL.md)** | Guide to navigating the Vibe Check, Dupe Finder, and scent pyramids, plus accessing the Developer Metrics Dashboard. |
 | **[Project Documentation Hub](documentation/README.md)** | Technical specifications, engineering details, testing blueprints, and API key setup. |
 
 ---
@@ -100,6 +100,9 @@ To enable the AI-powered natural language explanations:
    docker compose up -d
    ```
 For troubleshooting and verification steps, see the full [Groq LLM Setup Guide](documentation/GROQ_SETUP.md).
+
+### 3.5 Note on Documentation Layout
+All project documentation - installation, user manual, and engineering guides - now lives under [`documentation/`](documentation/README.md).
 
 ---
 

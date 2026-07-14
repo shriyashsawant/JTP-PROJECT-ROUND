@@ -9,10 +9,10 @@ Welcome to the engineering documentation hub for AuraMatch AI. This documentatio
 ### 1.0 [Architecture Diagrams (visual)](architecture-diagram.html)
 * System topology, request lifecycle, data model, and the scoring/diversity pipeline - illustrated, for a faster first read than the prose guides below. Open the linked HTML file directly in a browser (no server needed); static copies of all four plates are also embedded in the root [README.md](../README.md).
 
-### 1.1 [Installation Guide](../INSTALLATION_GUIDE.md)
+### 1.1 [Installation Guide](INSTALLATION_GUIDE.md)
 * Detailed step-by-step instructions on setting up and running the application (using Docker Compose or local host setups), environment files configuration, and database seeding details.
 
-### 1.2 [User Manual](../USER_MANUAL.md)
+### 1.2 [User Manual](USER_MANUAL.md)
 * Complete guide explaining how to navigate the Vibe Check Chat, Dupe Engine, read the Scent Detail Cards, use the Developer Dashboard, and issue API keys.
 
 ### 1.3 [System Architecture](SYSTEM_ARCHITECTURE.md)
@@ -52,4 +52,13 @@ AuraMatch AI combines semantic search with deterministic olfactory rules and dat
 
 ## 3. Development Process & AI Tool Usage
 
-This project was built with substantial use of AI coding assistants (Claude Code) across the full development lifecycle - architecture decisions, implementation, test writing, and this documentation set itself. Every AI-assisted change in this codebase followed the same discipline: a claim or plan proposed by the AI tool was verified against the actual running system (live database queries, real HTTP requests against the containers, full test/lint/type-check runs) before being accepted, not taken on faith. Several early AI-generated architectural proposals in this project's history were explicitly rejected or scaled back (e.g. a generic "enterprise blueprint" - hexagonal architecture, Redis caching, a full OpenTelemetry mesh - was assessed as disproportionate for this system's actual scale and only its one genuinely justified piece was implemented) precisely because that verify-before-trust discipline was applied throughout, not skipped for convenience. The author remains able to explain and justify every decision and every line of code in this repository, per the project's own AI-tool usage policy.
+This project was built with substantial use of AI tools across the full development lifecycle - planning, implementation, task tracking, and documentation. Different tools were used for different stages rather than one tool for everything:
+
+| Tool | Role in This Project | Why It Was Used |
+| :--- | :--- | :--- |
+| **Claude Code** | Multi-agent AI pair programming for the bulk of the lifecycle - architecture decisions, implementation, test writing, and this documentation set itself | Handles large multi-file changes and longer-running agentic work (parallel subagents) rather than single-turn chat |
+| **Gemini** (and other LLMs) | Drafting PRDs and early technical/product planning before implementation began | Used for broad ideation/planning passes ahead of the more execution-focused coding work |
+| **Antigravity** | Task and sprint planning - breaking the plan into ordered, actionable implementation tasks | Kept work scoped and sequenced so coding sessions had a clear task queue instead of ad hoc requests |
+| **Obsidian** | Persistent memory - cross-session notes capturing decisions, rejected approaches, and context that would otherwise be lost between sessions | Gave continuity across sessions/tools so prior decisions didn't need to be re-derived or re-explained each time |
+
+Every AI-assisted change in this codebase followed the same discipline: a claim or plan proposed by an AI tool was verified against the actual running system (live database queries, real HTTP requests against the containers, full test/lint/type-check runs) before being accepted, not taken on faith. Several early AI-generated architectural proposals in this project's history were explicitly rejected or scaled back (e.g. a generic "enterprise blueprint" - hexagonal architecture, Redis caching, a full OpenTelemetry mesh - was assessed as disproportionate for this system's actual scale and only its one genuinely justified piece was implemented) precisely because that verify-before-trust discipline was applied throughout, not skipped for convenience. The author remains able to explain and justify every decision and every line of code in this repository, per the project's own AI-tool usage policy.
