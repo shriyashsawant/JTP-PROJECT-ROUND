@@ -126,7 +126,14 @@ const SCENT_RE = /\b(woody|floral|citrus|fresh|sweet|spicy|oud|musk|vanilla|aqua
 // buildClarifyingQuestion's wasAsked(...,"budget") fallback still correctly
 // recognizes a plain "2000" typed in direct response to the budget question.
 const BUDGET_RE = /(budget|cheap|expensive|affordable|under|below|within|₹|rs\.?\s*\d|no limit|unlimited)/i;
-const DUPE_RE = /\b(alternative|dupe|cheaper than|similar to|instead of)\b/i;
+// Kept in sync with backend's DUPE_INTENT_PHRASES (scenario_map.py) plus its
+// own bare "dupe(s)" word check (intent_detector.detect_dupe_intent) - this
+// used to be a narrower ad hoc list ("alternative|dupe|cheaper than|similar
+// to|instead of") that missed "clone of", "smells like", "cheaper version",
+// and "budget version", so those phrasings fell through to the full 9-
+// question clarifying flow instead of routing straight to a dupe search the
+// way "cheaper alternative to X" already did.
+const DUPE_RE = /\b(alternative|dupe(s)?|cheaper than|similar to|instead of|clone of|smells like|cheaper version|budget version)\b/i;
 
 // Single source of truth for gender vocabulary - kept in sync with backend/
 // app/services/scenario_map.py's MALE_HINTS/FEMALE_HINTS/UNISEX_HINTS.
@@ -250,6 +257,11 @@ const PROJECTION_HINT_RE = /\b(subtle|close to skin|skin scent|light projection|
 // flow into the free-text query.
 const SKIN_TYPE_VALUE_RE = /\b(dry|oily|normal)\b\s*skin|\bskin\b\s*(?:is\s*)?(dry|oily|normal)\b/i;
 
+// Mirrors backend's _NEGATION_TRIGGER_PATTERN (intent_detector.py) just
+// closely enough to know "has the user already stated a note/ingredient to
+// avoid" - not a real clause parser, the backend does that at request time.
+const AVOID_NOTES_HINT_RE = /\b(?:no|not|without|avoid|hate|dislike)\b\s+\S/i;
+
 function extractSkinType(messages: ChatMessage[]): string | undefined {
   const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
   const match = SKIN_TYPE_VALUE_RE.exec(userTexts);
@@ -367,7 +379,7 @@ function buildClarifyingQuestion(messages: ChatMessage[]): { content: string; ty
       type: "scent",
     };
   }
-  if (!wasAsked(messages, "avoidNotes")) {
+  if (!AVOID_NOTES_HINT_RE.test(userTexts) && !wasAsked(messages, "avoidNotes")) {
     return {
       content: "Any notes or ingredients you'd like to avoid?",
       type: "avoidNotes",
@@ -400,7 +412,7 @@ function buildClarifyingQuestion(messages: ChatMessage[]): { content: string; ty
       type: "age",
     };
   }
-  if (!wasAsked(messages, "skinType")) {
+  if (!extractSkinType(messages) && !wasAsked(messages, "skinType")) {
     return {
       content: "Last one - do you know your skin type? Scents wear differently on dry vs. oily skin.",
       type: "skinType",
