@@ -148,6 +148,61 @@ const OCCASION_RE = /\b(gym|work\s*out|exercise|training|sports?|jog(?:ging)?|of
 // balsamic, animalic, ozonic were all entirely absent, so stating a scent
 // preference in any of those exact terms matched nothing here either.
 const SCENT_RE = /\b(woody|woodsy|florals?|white\s*floral|citrus(?:y)?|fresh|sweet|spicy|oud|musky?|vanilla|aquatic|marine|ozonic|green|tropical|fruity|gourmand|aromatic|earthy|smoky|leathery?|powdery|amber|balsamic|animalic|patchouli|incense|tobacco|rose|herbal|aldehydic)\b/i;
+
+// Bug: SCENT_RE was only ever used to decide whether to SKIP the scent
+// question, never to actually tell the backend what the user asked for.
+// The backend's own `note_families` request field (schemas.py) is scored at
+// 15% weight (NOTE_FAMILY_WEIGHT in decision_engine.py) against each
+// candidate's real notes/accords - and, unlike gender/longevity/projection,
+// has NO free-text fallback detection at all (decision_engine.py's own
+// docstring: "note_families was only ever used to expand the embedding
+// query text and then silently dropped by this deterministic scorer - a
+// result could rank highly on text similarity alone while containing zero
+// notes from a family the user explicitly asked for"). Since this chat
+// never sent it, a stated scent preference like "fresh and refreshing" only
+// ever reached scoring through the raw semantic embedding - SIM_WEIGHT is
+// just 0.07, the smallest weight in the whole formula - while
+// SCENARIO_WEIGHT (0.28, an occasion's typical accord profile) dominated
+// instead, which is exactly why a "fresh" party request could still surface
+// woody/musky top picks. Maps each SCENT_RE keyword to the corresponding
+// NOTE_FAMILIES key(s) from scenario_map.py (only where the correspondence
+// is unambiguous - "aromatic"/"smoky"/"powdery"/"balsamic" have no single
+// clean family and are deliberately left unmapped rather than guessed;
+// they still count toward the free-text query as before, just without the
+// extra structured-scoring boost).
+const SCENT_TO_NOTE_FAMILIES: Record<string, string[]> = {
+  woody: ["woody"], woodsy: ["woody"],
+  floral: ["floral"], florals: ["floral"], "white floral": ["floral"], rose: ["floral"], aldehydic: ["floral"],
+  citrus: ["citrus"], citrusy: ["citrus"],
+  fresh: ["fresh_aquatic"], aquatic: ["fresh_aquatic"], marine: ["fresh_aquatic"], ozonic: ["fresh_aquatic"],
+  green: ["green"], herbal: ["green"],
+  spicy: ["spicy"],
+  oud: ["earthy"], earthy: ["earthy"], patchouli: ["earthy"],
+  musk: ["animalic"], musky: ["animalic"], animalic: ["animalic"], leather: ["animalic"], leathery: ["animalic"],
+  vanilla: ["oriental", "gourmand"],
+  gourmand: ["gourmand"], sweet: ["gourmand"],
+  fruity: ["fruity"], tropical: ["fruity"],
+  amber: ["oriental"], incense: ["oriental"],
+  tobacco: ["woody", "oriental"],
+};
+
+// Scans the WHOLE active conversation (not just the first SCENT_RE match
+// used for question-gating) so "citrus and woody" contributes both
+// families, not just whichever was mentioned first.
+function extractNoteFamilies(messages: ChatMessage[]): string[] | undefined {
+  const activeMessages = getActiveMessages(messages);
+  const userTexts = activeMessages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
+  const globalRe = new RegExp(SCENT_RE.source, "gi");
+  const families = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = globalRe.exec(userTexts)) !== null) {
+    const key = match[1].toLowerCase().replace(/\s+/g, " ").trim();
+    for (const family of SCENT_TO_NOTE_FAMILIES[key] ?? []) {
+      families.add(family);
+    }
+  }
+  return families.size > 0 ? Array.from(families) : undefined;
+}
 // Regression: a bare `\d` alternative here used to be "safe enough" when
 // budget was always the 4th (and last free-text-numeric) question asked.
 // Once longevity ("8+ hours") and age ("22 years old") got their own
@@ -504,7 +559,7 @@ interface ChatMessage {
   // frozen per-message rather than read from the live conversation state,
   // since the conversation (and its sliding CONTEXT_WINDOW) may have moved
   // on by the time the button is clicked.
-  searchParams?: { query: string; budget?: number; dealBreaker?: boolean; age?: number; skinType?: string };
+  searchParams?: { query: string; budget?: number; dealBreaker?: boolean; age?: number; skinType?: string; gender?: string; noteFamilies?: string[] };
   currentLimit?: number;
   loadingMore?: boolean;
 }
@@ -860,6 +915,16 @@ export default function SearchPage() {
     // pulled out and sent as its own explicit field or it's silently lost.
     const skinType = extractSkinType(nextMessages);
 
+    // gender/note_families were extracted this whole time (extractPreferences,
+    // SCENT_RE) purely to gate clarifying questions and never actually sent to
+    // the backend - see extractNoteFamilies's comment for why that silently
+    // starved a real 15%-weight scoring dimension. gender does have a
+    // free-text fallback on the backend (detect_gender against the same
+    // combined query text), so this is more "redundant but more reliable
+    // than regex" than "previously totally lost" the way note_families was.
+    const prefs = extractPreferences(nextMessages);
+    const noteFamilies = extractNoteFamilies(nextMessages);
+
     // Bare "cheaper"/"less expensive" with no number can't be picked up by
     // the backend's own detect_budget_from_text (it needs an actual figure) -
     // this is the one piece of real cross-turn logic: derive an explicit
@@ -889,6 +954,8 @@ export default function SearchPage() {
         deal_breaker: dealBreaker,
         age,
         skin_type: skinType,
+        gender: prefs.gender,
+        note_families: noteFamilies,
       });
       if (results.length === 0) {
         setMessages((prev) => [
@@ -910,7 +977,7 @@ export default function SearchPage() {
           role: "assistant",
           content: buildSummaryLine(results),
           perfumes: results,
-          searchParams: { query: combinedQuery, budget: explicitBudget, dealBreaker, age, skinType },
+          searchParams: { query: combinedQuery, budget: explicitBudget, dealBreaker, age, skinType, gender: prefs.gender, noteFamilies },
           currentLimit: RESULTS_LIMIT,
         },
       ]);
@@ -948,6 +1015,8 @@ export default function SearchPage() {
         deal_breaker: target.searchParams.dealBreaker,
         age: target.searchParams.age,
         skin_type: target.searchParams.skinType,
+        gender: target.searchParams.gender,
+        note_families: target.searchParams.noteFamilies,
       });
       setMessages((prev) =>
         prev.map((m) =>
