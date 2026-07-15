@@ -120,8 +120,34 @@ const HAS_DIGIT_RE = /\d/;
 // question got asked anyway despite already being answered. `part(?:y|ies)`
 // covers both forms; a trailing `s?` on the whole group covers the ordinary
 // plurals (dates, weddings, festivals, ...) for the rest of the list.
-const OCCASION_RE = /\b(gym|office|work|date|part(?:y|ies)|wedding|daily|casual|summer|winter|monsoon|spring|autumn|fall|evening|night|formal|festival|commute|travel|college|school)s?\b/i;
-const SCENT_RE = /\b(woody|floral|citrus|fresh|sweet|spicy|oud|musk|vanilla|aquatic|fruity|gourmand|aromatic|earthy|smoky|leather|powdery)\b/i;
+// Regression: backend's own SCENARIO_KEYWORDS (scenario_map.py) recognizes
+// several phrases per occasion that this single-word list didn't - "workout"/
+// "exercise"/"training" for gym, "night out"/"club"/"rave" for party, "9 to
+// 5"/"meeting"/"desk job" for office, "after work"/"dinner" for evening,
+// "reception"/"celebration" for wedding, "everyday"/"regular wear" for
+// daily - so stating an occasion in exactly the backend's own recognized
+// vocabulary still got the occasion question asked again. Bare "run" is
+// deliberately left out despite backend's gym keywords including it - "in
+// the long run" is common enough idiomatic phrasing that it would silently
+// (and wrongly) mark occasion as answered on a message that never mentioned
+// one.
+const OCCASION_RE = /\b(gym|work\s*out|exercise|training|sports?|jog(?:ging)?|office|work|desk\s*job|workplace|meeting|professional|9.?to.?5|commute|date|part(?:y|ies)|night\s*out|club(?:bing)?|rave|wedding|festival|celebration|reception|daily|everyday|every\s*day|regular\s*wear|casual|summer|hot\s*weather|heatwave|winter|cold\s*weather|snow|chilly|monsoon|rainy|humid|spring|autumn|fall|evening|dinner|after\s*work|night|formal|travel|college|school)s?\b/i;
+// Regression: several of these only matched the bare noun/root form, missing
+// the adjective form people actually type - "musky" (which is also the
+// backend's own canonical accord-family term throughout scenario_map.py, not
+// just a colloquialism), "florals", "leathery", "woodsy" (also used verbatim
+// in scenario_map.py's SCENARIO_KEYWORDS), "citrusy" - none matched "musk",
+// "floral", "leather", "woody", or "citrus" respectively because \b requires
+// a non-word boundary right after the root, which a directly-attached suffix
+// (-y, -s, -ies) never provides. A message like "I like musky scents,
+// leathery and warm" matched none of these before, silently asking the
+// scent question again despite already stating a clear preference.
+// Also widened to the rest of backend's own accord vocabulary
+// (LONGEVITY_ACCORD_WEIGHTS/SILLAGE_ACCORD_WEIGHTS in scenario_map.py) -
+// amber, patchouli, tobacco, rose, herbal, green, marine, tropical, incense,
+// balsamic, animalic, ozonic were all entirely absent, so stating a scent
+// preference in any of those exact terms matched nothing here either.
+const SCENT_RE = /\b(woody|woodsy|florals?|white\s*floral|citrus(?:y)?|fresh|sweet|spicy|oud|musky?|vanilla|aquatic|marine|ozonic|green|tropical|fruity|gourmand|aromatic|earthy|smoky|leathery?|powdery|amber|balsamic|animalic|patchouli|incense|tobacco|rose|herbal|aldehydic)\b/i;
 // Regression: a bare `\d` alternative here used to be "safe enough" when
 // budget was always the 4th (and last free-text-numeric) question asked.
 // Once longevity ("8+ hours") and age ("22 years old") got their own
@@ -152,9 +178,16 @@ const DUPE_RE = /\b(alternative|dupe(s)?|cheaper than|similar to|instead of|clon
 // so a message like "movie for a lady?" could be bounced as off-topic by
 // looksOffTopic() while the backend would have recognized the same gender
 // signal.
-const MALE_WORDS = "men|man|male|masculine|boys?|him|gentlemen|gentleman";
-const FEMALE_WORDS = "women|woman|female|feminine|girls?|her|ladies|lady";
-const UNISEX_WORDS = "unisex|shared|both";
+// Regression: drifted out of sync again - "guy", "his", "husband",
+// "boyfriend" (backend MALE_HINTS), "hers", "wife", "girlfriend" (backend
+// FEMALE_HINTS), and "gender neutral"/"gender-neutral"/"for everyone"
+// (backend UNISEX_HINTS) were all missing, so e.g. "buying this for my
+// husband" or "something gender neutral" matched nothing here and the
+// gender question got asked again despite already being answered in the
+// exact vocabulary the backend itself recognizes.
+const MALE_WORDS = "men|man|male|masculine|boys?|guys?|him|his|husband|boyfriend|gentlemen|gentleman";
+const FEMALE_WORDS = "women|woman|female|feminine|girls?|her|hers|wife|girlfriend|ladies|lady";
+const UNISEX_WORDS = "unisex|shared|both|gender.?neutral|for everyone";
 const MALE_GENDER_RE = new RegExp(`\\b(${MALE_WORDS})\\b`, "i");
 const FEMALE_GENDER_RE = new RegExp(`\\b(${FEMALE_WORDS})\\b`, "i");
 const UNISEX_GENDER_RE = new RegExp(`\\b(${UNISEX_WORDS})\\b`, "i");
@@ -261,8 +294,17 @@ function extractAge(text: string): number | undefined {
 // PROJECTION_HINTS - so a query that already naturally states "8+ hours" or
 // "subtle, close to skin" skips the corresponding question instead of asking
 // something the user already answered unprompted.
-const LONGEVITY_HINT_RE = /\b\d{1,2}\s*\+?\s*(?:(?:-\s*|to\s+|or\s+)\d{1,2}\s*)?(?:hour|hr)s?\b|\b(long.?lasting|lasts?\s+(all|full)\s+day|all.?day)\b/i;
-const PROJECTION_HINT_RE = /\b(subtle|close to skin|skin scent|light projection|moderate projection|strong projection|room.?filling|beast mode|sillage)\b/i;
+// Regression: several phrases straight out of backend's own LONGEVITY_PHRASES
+// list weren't covered - "lasts long", "stays long", "longevity", "full day"
+// (without a preceding "lasts"), and "long wear" all matched nothing here,
+// so stating longevity in exactly the backend's own vocabulary still got the
+// longevity question asked again.
+const LONGEVITY_HINT_RE = /\b\d{1,2}\s*\+?\s*(?:(?:-\s*|to\s+|or\s+)\d{1,2}\s*)?(?:hour|hr)s?\b|\b(long.?lasting|long\s+wear|longevity|lasts?\s+long|stays?\s+long|lasts?\s+(all|full)\s+day|all.?day|full\s*day)\b/i;
+// Regression: same gap as LONGEVITY_HINT_RE, against backend's own
+// PROJECTION_HINTS - "soft projection", "not too strong" (light), "medium
+// projection", "balanced projection" (moderate), and "loud", "projects a
+// lot" (strong) all matched nothing here.
+const PROJECTION_HINT_RE = /\b(subtle|close to skin|skin scent|light projection|soft projection|not too strong|moderate projection|medium projection|balanced projection|strong projection|room.?filling|beast mode|sillage|loud|projects?\s+a\s+lot)\b/i;
 
 // skin_type has no free-text detector on the backend at all (unlike gender/
 // budget/scenario/longevity/projection) - it's only ever read from the
@@ -320,13 +362,18 @@ function extractPreferences(messages: ChatMessage[]): ExtractedPreferences {
 
   const prefs: ExtractedPreferences = {};
 
-  // Extract Gender
-  if (MALE_GENDER_RE.test(userTexts)) {
+  // Extract Gender - unisex checked first, mirroring backend's
+  // detect_gender(): MALE_GENDER_RE/FEMALE_GENDER_RE are single-word
+  // regexes, so a phrase like "men and women" or "gender neutral" (which
+  // contains "men") would otherwise match the male branch first and never
+  // reach the unisex check at all, confidently misreading a request for
+  // both as "male" instead of recognizing the explicit unisex signal.
+  if (UNISEX_GENDER_RE.test(userTexts)) {
+    prefs.gender = "unisex";
+  } else if (MALE_GENDER_RE.test(userTexts)) {
     prefs.gender = "male";
   } else if (FEMALE_GENDER_RE.test(userTexts)) {
     prefs.gender = "female";
-  } else if (UNISEX_GENDER_RE.test(userTexts)) {
-    prefs.gender = "unisex";
   }
 
   // Extract Occasion
