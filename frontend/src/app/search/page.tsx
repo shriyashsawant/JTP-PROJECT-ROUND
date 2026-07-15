@@ -113,7 +113,14 @@ const HAS_DIGIT_RE = /\d/;
 // dimensions in decision_engine.py (SCENARIO_WEIGHT=0.28 is the single
 // largest weight, which is why occasion is asked about first) rather than
 // an arbitrary word list.
-const OCCASION_RE = /\b(gym|office|work|date|party|wedding|daily|casual|summer|winter|monsoon|spring|autumn|fall|evening|night|formal|festival|commute|travel|college|school)\b/i;
+// Regression: "party" is not a substring of "parties" (party -> parties
+// drops the "y" and adds "ies", it isn't a plain "+s" plural like most of
+// the other words here), so a message that only ever said "parties" (e.g.
+// "I sweat a lot during parties...") matched nothing and the occasion
+// question got asked anyway despite already being answered. `part(?:y|ies)`
+// covers both forms; a trailing `s?` on the whole group covers the ordinary
+// plurals (dates, weddings, festivals, ...) for the rest of the list.
+const OCCASION_RE = /\b(gym|office|work|date|part(?:y|ies)|wedding|daily|casual|summer|winter|monsoon|spring|autumn|fall|evening|night|formal|festival|commute|travel|college|school)s?\b/i;
 const SCENT_RE = /\b(woody|floral|citrus|fresh|sweet|spicy|oud|musk|vanilla|aquatic|fruity|gourmand|aromatic|earthy|smoky|leather|powdery)\b/i;
 // Regression: a bare `\d` alternative here used to be "safe enough" when
 // budget was always the 4th (and last free-text-numeric) question asked.
@@ -187,11 +194,19 @@ function looksOffTopic(messages: ChatMessage[]): boolean {
 // this chat sends everything as free text, "22, need a gym scent..." would
 // otherwise silently lose the age entirely (it'd just sit inertly inside
 // the embedding text, never reaching age_fit's actual scoring). Deliberately
-// conservative - only "22 years old"/"22yo"/"22 y/o" explicitly, or a bare
-// 1-2 digit number at the very start of the message (a common informal
-// self-intro pattern, "22, love hiking..." style) - not any bare number
-// anywhere, which would be far too easy to confuse with something else.
-const AGE_RE = /\b(\d{1,2})\s*(?:years?\s*old|yo\b|y\/o)\b|^(\d{1,2})\b(?=[\s,])/i;
+// conservative - only "22 years old"/"22 years"/"22yo"/"22 y/o" explicitly,
+// or a bare 1-2 digit number at the very start of the message (a common
+// informal self-intro pattern, "22, love hiking..." style) - not any bare
+// number anywhere, which would be far too easy to confuse with something
+// else.
+// Regression: "22 years" (no trailing "old") - an extremely common way to
+// state an age - matched neither branch, so a fully-stated age like "I'm 22
+// years and I sweat a lot at parties..." still got the age question asked
+// anyway. "old" is now optional after "years?"; extractAge's own 13-100
+// bounds check already filters out the rare false-positive this widens
+// (e.g. "worn this cologne for 10 years" - 10 falls outside that range and
+// is discarded, same as it would be for any other stray number).
+const AGE_RE = /\b(\d{1,2})\s*(?:years?(?:\s*old)?|yo\b|y\/o)\b|^(\d{1,2})\b(?=[\s,])/i;
 
 // Regression: "i'm twenty two i do go to parties..." stated age in words,
 // not digits - AGE_RE only ever matched digit forms ("22 years old", a bare
