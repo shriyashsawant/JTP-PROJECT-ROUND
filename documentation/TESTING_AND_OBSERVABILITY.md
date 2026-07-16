@@ -60,14 +60,19 @@ To avoid making real network requests to the Groq API during tests, the Groq cli
 
 FastAPI request lifecycles are monitored by `request_logging_middleware`, defined *inline* in `backend/app/main.py` (there is no separate `middleware.py` file - it's registered directly on the `app` instance via `@app.middleware("http")`):
 *   **Request ID correlation**: generates a 12-char request ID per request, stashed in a `ContextVar` (`app/core/logging_config.py`) rather than a local variable, so every log line emitted anywhere deeper in the call stack during that request - route handlers, services - is automatically tagged with it via `RequestIdFilter`, without threading an ID parameter through every function signature. The same ID is returned as an `X-Request-ID` response header, so a client-reported error can be traced back to the exact server-side log line.
+*   **Structured JSON logging**: all log output is emitted as machine-parseable JSON via `structlog` with `JSONRenderer` (configured in `app/core/logging_config.py`). The structlog pipeline includes `merge_contextvars` (for request_id injection), `add_log_level`, `TimeStamper(fmt="iso")`, `StackInfoRenderer`, and `format_exc_info`. This replaces the earlier plain-text `%s %s -> %d (%.1fms)` format with a structured JSON envelope containing `event`, `request_id`, `level`, `timestamp`, and any additional bound context.
 *   **Performance metrics**: measures request duration in milliseconds via `time.perf_counter()`.
 *   **Exception safety**: a request that raises still gets a logged `-> 500` line (via `logger.exception`, capturing the traceback) before the exception propagates - a crash is never silently unlogged.
 
-```
-Actual log line format (logger.info/.exception, not a JSON blob):
-%s %s -> %d (%.1fms)
-e.g.: POST /api/v1/search/context -> 200 (184.3ms)
-```
+---
+
+## 4.1 Failure Injection Middleware (Chaos Testing)
+
+`backend/app/core/failure_injection.py` provides a `FailureInjectionMiddleware` registered in `app/main.py` for chaos-engineering validation:
+*   **Activation**: only active when `failure_injection` is included in the `feature_flags` environment variable (comma-separated set). Disabled by default in production.
+*   **Artificial latency**: injects random delays (configurable) into a fraction of requests to simulate slow-not-down failure modes.
+*   **Random errors**: returns simulated `500 Internal Server Error` responses for a configurable fraction of requests (`{"detail": "Simulated failure (chaos testing)"}`).
+*   **Purpose**: validates that circuit breakers, retry logic, and frontend error-handling paths behave correctly under degraded conditions without requiring real infrastructure failures.
 
 ---
 

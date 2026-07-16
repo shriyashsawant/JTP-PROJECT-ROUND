@@ -23,10 +23,13 @@ graph TD
     LoggingMW["request_logging_middleware (inline in app/main.py)"]
     AuthDep[require_api_key - app/api/auth.py]
     RateLimiter[Token-Bucket Rate Limiter - app/services/rate_limiter.py]
-    Routes["Routers - app/api/routes_search.py, routes_dupe.py"]
+    Routes["Routers - routes_search, routes_dupe, routes_classify, routes_events, routes_image"]
     DBRepository[Database Repository - app/services/db_repository.py]
     DecisionEngine[Olfactory Engine - app/services/decision_engine.py]
     MLEngine[Embedding Engine - app/services/ml_engine.py]
+    PreferenceExtractor[Preference Extractor - app/services/preference_extractor.py]
+    OffTopicClassifier[Off-Topic Classifier - app/services/off_topic_classifier.py]
+    ABTesting[A/B Testing - app/services/ab_testing.py]
     CircuitBreaker[Circuit Breaker - app/services/circuit_breaker.py]
     LLMEnrichment[Groq Rerank Service - app/services/llm_enrichment.py]
     PostgresDB[(PostgreSQL Database + pgvector)]
@@ -39,11 +42,16 @@ graph TD
     RateLimiter -->|429 if exhausted, else proceed| Routes
     Routes -->|Extract Intent / Search| DBRepository
     Routes -->|Deterministic Refinement| DecisionEngine
+    Routes -->|Extract Preferences| PreferenceExtractor
+    Routes -->|Off-Topic Check| OffTopicClassifier
+    Routes -->|Variant Assignment| ABTesting
 
     DBRepository -->|Cosine Distance Index Query| PostgresDB
     AuthDep -->|key lookup by hash| PostgresDB
     DecisionEngine -->|Generate Query Vector| MLEngine
     MLEngine -->|In-Memory Inference| LocalModel
+    PreferenceExtractor -->|Embedding Cosine Match| MLEngine
+    PreferenceExtractor -->|LLM Fallback| LLMEnrichment
 
     DecisionEngine -->|Check State / Fallback| CircuitBreaker
     CircuitBreaker -->|JSON Re-ranking Prompt| LLMEnrichment
@@ -77,6 +85,8 @@ The Python backend is located under the `backend/` directory.
 *   `backend/app/api/routes_search.py`: `POST /api/v1/search/context` (natural-language + filter search) and `GET /api/v1/health`.
 *   `backend/app/api/routes_dupe.py`: `POST /api/v1/search/dupe` (budget-alternative search) and `GET /api/v1/perfume/{id}`.
 *   `backend/app/api/routes_classify.py`: `POST /api/v1/classify-intent` (intent classifier) and `POST /api/v1/extract-preferences` (delegated preference extraction).
+*   `backend/app/api/routes_events.py`: `POST /api/v1/events/click`, `POST /api/v1/events/purchase`, and `POST /api/v1/events/explanation-rating` (implicit feedback collection for Bayesian weight optimization).
+*   `backend/app/api/routes_image.py`: `POST /api/v1/search/image` (image-based similarity search using HSV color histogram embeddings).
 *   `backend/app/api/auth.py`: `require_api_key` FastAPI dependency - validates the `X-API-Key` header against the hashed `api_keys` table, enforces the Origin allowlist for publishable keys, and applies per-key rate limiting. Mounted on every product route except `/health`.
 *   `backend/app/api/dependencies.py`: `get_db_pool()`/`get_db()` - lazy-initialized, lock-guarded asyncpg connection pool shared across the app.
 *   `backend/app/models/schemas.py`: Pydantic request/response schemas representing the API's validation boundary.
@@ -91,10 +101,22 @@ The Python backend is located under the `backend/` directory.
 *   `backend/app/services/rate_limiter.py`: In-memory token-bucket rate limiter keyed per API key (and per-client-IP for publishable keys specifically) - see [THIRD_PARTY_API.md](THIRD_PARTY_API.md).
 *   `backend/app/services/llm_enrichment.py`: Interfaces with the Groq API using prompt formatting to generate natural language explanations and feature checklist verifications.
 *   `backend/app/services/scenario_map.py`: Holds the static note-to-family taxonomy maps, scenario word bounds, and longevity/sillage accord weights.
+*   `backend/app/services/off_topic_classifier.py`: 3-layer off-topic detection (regex → embedding cosine similarity → LLM fallback) that gates whether a query is perfume-related before entering the search pipeline.
+*   `backend/app/services/ab_testing.py`: Per-request A/B variant assignment via `request_id` hash, exposed in the `X-AuraMatch-Variant` response header.
+*   `backend/app/services/hnsw_tuner.py`: Startup calibration of HNSW `ef_search` parameter and per-query dynamic adjustment based on budget stringency.
+*   `backend/app/services/embedding_sweeper.py`: Background worker that incrementally re-embeds perfumes whose `last_embedded_at` is older than the current model version.
+*   `backend/app/services/user_profile.py`: Session-level user profile builder from click/purchase history, injected into the LLM prompt for personalized re-ranking.
+*   `backend/app/services/image_search.py`: HSV color histogram embedding generation and ANN search for image-based perfume similarity.
 
 **Data ingestion and schema evolution** (see [DATA_INGESTION_PIPELINE.md](DATA_INGESTION_PIPELINE.md) for the full rationale):
 *   `backend/app/ingestion/`: `contracts.py` (the canonical `PerfumeRecord` any data source normalizes into), `validators.py` (quality gate), `upsert.py` (priority-aware conditional upsert, replacing a silent-drop `ON CONFLICT DO NOTHING`).
 *   `backend/app/db/migrations/`: Alembic migration history (`0001_baseline` through `0004_api_keys`) - the sole source of truth for schema changes going forward, applied automatically on container startup via `backend/entrypoint.sh` before `uvicorn` starts.
+
+**Core infrastructure (`backend/app/core/`):**
+*   `config.py`: Pydantic `Settings` model loading all environment variables (`DATABASE_URL`, `GROQ_API_KEY`, `feature_flags`, etc.) with sensible defaults.
+*   `logging_config.py`: Configures `structlog` with JSON rendering, `ContextVar`-based request ID injection, ISO timestamps, and stack trace formatting. Replaces the earlier plain-text log format.
+*   `failure_injection.py`: `FailureInjectionMiddleware` for chaos-engineering testing — injects artificial latency and random 500 errors when the `failure_injection` feature flag is active.
+*   `metrics.py`: Prometheus-format metric definitions (`auramatch_http_request_duration_seconds`, `auramatch_http_requests_failed_total`, `auramatch_db_pool_connections_active`, `auramatch_circuit_breaker_state`, `auramatch_rate_limit_rejections_total`) and the `/metrics` endpoint handler.
 
 ---
 
@@ -138,8 +160,22 @@ What *is* real: this system is deliberately built to evolve past a static, batch
 | 1 | **Done** | Ingestion pipeline hardening (`app/ingestion/`) - canonical record contract, quality-gate validators, priority-aware conditional upsert | Fixed two real bugs a live/multi-source ingestion pipeline would have hit immediately: a silent-drop `ON CONFLICT DO NOTHING`, and an unpersisted source-priority invariant that a one-row-at-a-time live upsert had no way to check. |
 | 6 | **Done** | Two-tier API key auth (publishable/secret) + token-bucket rate limiting | Promoted ahead of its original position once this API needed to be genuinely usable by third-party integrators, not just documented as a policy. Solves a real, specific constraint: the frontend calls the API directly from the browser with no server-side proxy, so it can never hold a real secret. |
 | 2 | **Done** | A `/metrics` Prometheus endpoint (`prometheus_client`) - latency histograms (by route template + status), error counter, DB pool gauge, circuit-breaker state gauge, rate-limit rejection counter | Small, standard, and the actual prerequisite for ever justifying a caching layer later - real numbers are needed before knowing whether there's a latency problem worth caching for. Landed right after the ANN candidate pool was widened up to 5-20x (`db_repository._candidate_pool_size`), which is exactly the kind of change this endpoint exists to measure the real-world impact of. See [TESTING_AND_OBSERVABILITY.md §5](TESTING_AND_OBSERVABILITY.md). |
-| 3 | Roadmap | Commerce-readiness data model - a `listings` table (retailer, price, url, last_checked_at) separate from the perfume's own row | Splits "the perfume" (content) from "where/how much it costs" *before* live pricing/checkout needs multiple retailers per perfume, avoiding a bolt-on redesign later. |
-| 4 | Roadmap | Auth foundation - `users` table, session/JWT middleware, `/api/v1/me/*` convention | Plumbing only, built when user-facing features (saved searches, favorites) actually need it - not speculatively ahead of that need. |
-| 5 | Roadmap | Admin/ops trust boundary - `/api/v1/admin/*`, role-gated, audit log | Supports reviewing imported/ingested data and approving changes once ingestion volume makes that a real human workflow, not a hypothetical one. |
+| 7 | **Done** | Embedding model upgrade (`BAAI/bge-small-en-v1.5`) + `is_query` flag | Drop-in replacement for `all-MiniLM-L6-v2` with better retrieval quality at the same 384-dim vector size. BGE's query-prefix convention (`is_query=True`) is now used for asymmetric search. |
+| 8 | **Done** | Hybrid search (FTS `ts_rank` + GIN index, 70/30 dense/sparse blend) | Combines dense embedding similarity with sparse full-text search to improve recall for queries with exact brand/note name mentions that embeddings alone can miss. |
+| 9 | **Done** | HNSW auto-tune (`hnsw_tuner.py`) - startup calibration + per-query `ef_search` adjustment | Dynamically adjusts `ef_search` based on budget stringency for better recall/latency tradeoff. |
+| 10 | **Done** | A/B testing infrastructure (`ab_testing.py`) - per-request variant assignment via `request_id` hash, `X-AuraMatch-Variant` header | Foundation for measuring the impact of algorithm/UI changes on click-through and engagement rates. |
+| 11 | **Done** | Implicit feedback + Bayesian weight optimization (`routes_events.py`, `feedback_events` table) | `POST /events/click`, `/purchase`, `/explanation-rating` endpoints collect user signals. Daily Bayesian optimization over the 10 scoring weights is now possible. |
+| 12 | **Done** | Session-level personalization (`user_profile.py`) | User click/purchase history is injected into the LLM prompt for personalized re-ranking. |
+| 13 | **Done** | Extended LLM re-ranking - `adjusted_score` in prompt, 70/30 deterministic/LLM blend | The LLM now returns a score adjustment alongside its explanation, blended with the deterministic score. |
+| 14 | **Done** | Structured JSON logging (`structlog`) with request_id context | All log output is machine-parseable JSON via `structlog.processors.JSONRenderer`, replacing plain-text formatting. |
+| 15 | **Done** | Failure injection middleware (`failure_injection.py`) for chaos testing | Simulates latency and random errors when the `failure_injection` feature flag is active. |
+| 16 | **Done** | Incremental embedding sweeper (`embedding_sweeper.py`) + `last_embedded_at` column | Background worker re-embeds perfumes whose embeddings are stale relative to the current model version. |
+| 17 | **Done** | Image similarity search (`image_search.py`, `routes_image.py`) - HSV color histogram embeddings | ANN search over bottle image color histograms, exposed via `POST /api/v1/search/image`. |
+| 18 | **Done** | Read replica split - reader pool for search, writer pool for ingestion/events | Separates read and write database connections. pgvector indexes on replicas are served via WAL replication. |
+| 19 | **Done** | Frontend FSM + React Query + Playwright E2E tests | Finite state machine for chat flow (`search-fsm.ts`), React Query caching (`queries.ts`), and comprehensive E2E tests. |
+| 20 | **Done** | Backend-delegated preference extraction (`preference_extractor.py`, `routes_classify.py`) | 3-layer extraction pipeline (regex → embedding → LLM) replaces fragile frontend regexes, keeping client and server logic in sync. |
+| 21 | Roadmap | Commerce-readiness data model - a `listings` table (retailer, price, url, last_checked_at) separate from the perfume's own row | Splits "the perfume" (content) from "where/how much it costs" *before* live pricing/checkout needs multiple retailers per perfume, avoiding a bolt-on redesign later. |
+| 22 | Roadmap | Auth foundation - `users` table, session/JWT middleware, `/api/v1/me/*` convention | Plumbing only, built when user-facing features (saved searches, favorites) actually need it - not speculatively ahead of that need. |
+| 23 | Roadmap | Admin/ops trust boundary - `/api/v1/admin/*`, role-gated, audit log | Supports reviewing imported/ingested data and approving changes once ingestion volume makes that a real human workflow, not a hypothetical one. |
 
 **Still explicitly not planned, with reasoning** (this list matters as much as the roadmap itself): full hexagonal architecture (no second real adapter to swap - one DB, one model host); Redis/multi-tier caching (no measured load problem yet - Phase 2 is what would ever produce that evidence); CQRS/message-queue write side (ingestion already runs as a separate process from serving; a queue is unjustified until ingestion volume/frequency actually creates contention); a full OpenTelemetry tracing mesh (earns its keep across many services/hops - there's one backend service today, and Phase 2's metrics endpoint is the proportionate step before that).

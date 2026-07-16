@@ -17,7 +17,7 @@ This document covers the Next.js web application: page layout, state management,
 | Icons | lucide-react | - |
 | Fonts | Geist Sans/Mono (body/code), Playfair Display (headings) | via `next/font/google` |
 
-No state management library, no data-fetching library (React Query, SWR, etc.) - the app is small enough that plain `useState`/`useEffect` plus a thin `fetch` wrapper (`src/lib/api.ts`) covers every page without adding a dependency that isn't earning its keep yet.
+React Query (`@tanstack/react-query`) is used for client-side API state caching and data fetching management (configured via `QueryProvider.tsx` and custom queries in `src/lib/queries.ts`). A custom finite state machine (`src/lib/search-fsm.ts`) manages page routing states, clarification progression, and search queries dynamically.
 
 ---
 
@@ -49,6 +49,16 @@ const MAX_SAVED_CONVERSATIONS = 30;
 **Why `localStorage`, not `sessionStorage`**: a saved chat is meant to survive a closed tab or browser, not just a back-navigation within one session - the "Chats" history panel lets a user return to an old conversation days later, which `sessionStorage` (cleared when the tab closes) can't support at all. **Why every conversation is stored, not just one**: starting a new chat must never silently discard an old one - it just stops being the active thread. The oldest conversations beyond `MAX_SAVED_CONVERSATIONS` (30, sorted by last-updated) are trimmed on save.
 
 `/dupe`'s redirect (see §2) is the only other place client state briefly matters - it reads a `?name=` query param once, translates it to a `?prefill=` on `/search`, and renders nothing itself.
+
+### 3.1 Finite State Machine (`search-fsm.ts`)
+The search chat flow operates on a custom Finite State Machine (FSM) implemented in `frontend/src/lib/search-fsm.ts`.
+- **States**: `idle`, `extracting`, `clarifying`, `searching`, `results`, `error`, `off_topic`.
+- **Transitions**: Controlled deterministically based on user message submissions, API extraction outputs, and candidate search query results. This ensures predictable UI state flows and prevents race conditions when clicking suggestion chips or answering questions rapidly.
+
+### 3.2 React Query and Caching (`queries.ts`)
+API requests are managed using React Query hooks located in `frontend/src/lib/queries.ts` and wrapped by `QueryProvider` in `frontend/src/app/layout.tsx`. This enables:
+- Automatic caching of perfume details (by ID) to avoid redundant network requests when switching between chat and detail views.
+- Clean request loading, error, and refetch states.
 
 ---
 
