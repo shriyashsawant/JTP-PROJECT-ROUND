@@ -30,6 +30,11 @@ The backend test suite is located in `backend/tests/` and contains **287 unit an
 *   `tests/test_rate_limiter.py`: Tests the token-bucket rate limiter in isolation - token consumption, continuous refill, and a concurrent-race test proving the per-bucket lock prevents over-consumption.
 *   `tests/test_scenario_map.py`: Verifies notes-to-family taxonomy mapping and the note classification parser.
 *   `tests/test_schemas.py`: Tests Pydantic model schemas, verifying validation boundaries.
+*   `tests/test_preference_extractor.py`: Tests the 3-layer preference extraction service orchestrating local regexes, semantic cosine scenario matches, and Groq fallback.
+
+### 2.2 Frontend E2E Test Suite (Playwright)
+The frontend E2E test suite is located in `frontend/e2e/` and runs Playwright integration tests:
+- `frontend/e2e/search.spec.ts`: Tests the full conversational flow and search capabilities of AuraMatch AI. This includes verifying page loads, entering detailed queries to immediately load results, typing vague queries and clicking through all 9 clarifying questions, handling off-topic boundaries, and verifying connection error behavior. All E2E tests run against the unmocked live Docker containers (backend + database) to ensure production fidelity.
 
 ---
 

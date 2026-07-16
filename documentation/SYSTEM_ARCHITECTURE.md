@@ -76,6 +76,7 @@ The Python backend is located under the `backend/` directory.
 **API layer:**
 *   `backend/app/api/routes_search.py`: `POST /api/v1/search/context` (natural-language + filter search) and `GET /api/v1/health`.
 *   `backend/app/api/routes_dupe.py`: `POST /api/v1/search/dupe` (budget-alternative search) and `GET /api/v1/perfume/{id}`.
+*   `backend/app/api/routes_classify.py`: `POST /api/v1/classify-intent` (intent classifier) and `POST /api/v1/extract-preferences` (delegated preference extraction).
 *   `backend/app/api/auth.py`: `require_api_key` FastAPI dependency - validates the `X-API-Key` header against the hashed `api_keys` table, enforces the Origin allowlist for publishable keys, and applies per-key rate limiting. Mounted on every product route except `/health`.
 *   `backend/app/api/dependencies.py`: `get_db_pool()`/`get_db()` - lazy-initialized, lock-guarded asyncpg connection pool shared across the app.
 *   `backend/app/models/schemas.py`: Pydantic request/response schemas representing the API's validation boundary.
@@ -84,6 +85,7 @@ The Python backend is located under the `backend/` directory.
 *   `backend/app/services/db_repository.py`: Isolates execution of raw SQL queries. Coordinates connection pooling, vector parsing, GIN array exclusion pushdowns, and dynamically falls back to accord classification when notes are absent in the database.
 *   `backend/app/services/decision_engine.py`: The core of the matching algorithm. Executes score calculations, scenario mappings, chemical bridge checks, concentration performance updates, and unisex gender bias modifiers - see [DECISION_ENGINE.md](DECISION_ENGINE.md).
 *   `backend/app/services/intent_detector.py`: A deterministic regex and keyword parser that extracts intent (e.g. longevity, budget, sillage, gender, negation) from the raw input string before query execution.
+*   `backend/app/services/preference_extractor.py`: Unified 3-layer preference extraction service (regex → embedding → LLM fallback) with circuit breaker protection.
 *   `backend/app/services/ml_engine.py`: Manages vector embedding operations. Loads the local SentenceTransformer model on startup and runs async thread-pool executors to ensure model calculations do not block the asyncio web loop.
 *   `backend/app/services/circuit_breaker.py`: Generic async circuit breaker (CLOSED/OPEN/HALF_OPEN) wrapping the optional Groq call - trips after 5 consecutive failures, so an outage becomes an instant rejection instead of a repeated timeout tax.
 *   `backend/app/services/rate_limiter.py`: In-memory token-bucket rate limiter keyed per API key (and per-client-IP for publishable keys specifically) - see [THIRD_PARTY_API.md](THIRD_PARTY_API.md).

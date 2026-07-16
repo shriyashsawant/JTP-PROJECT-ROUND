@@ -56,9 +56,9 @@ const MAX_SAVED_CONVERSATIONS = 30;
 
 `/search` is a chat interface, not a form: a message list (`ChatMessage[]`), a free-text input, and quick-reply chips that change based on whichever question was just asked. Two cooperating mechanisms decide, on every user message, whether to ask another clarifying question or run a real search.
 
-### 4.1 Extracting What's Already Been Said (`extractPreferences`)
+### 4.1 Backend-Delegated Preference Extraction (`extractPreferences`)
 
-Rather than a multi-step wizard with explicit "next" buttons, the app tries to read structured preferences (gender, occasion, scent family, budget) straight out of free-text - a user who opens with *"fresh citrus scent for the gym, under ₹3,000"* should never be asked about scent family or budget again, even though they never clicked a single quick-reply chip. Each preference has its own small regex (shared, not duplicated per-call-site - see `MALE_WORDS`/`FEMALE_WORDS`/`UNISEX_WORDS` and `OCCASION_RE`/`SCENT_RE`/`BUDGET_RE`), and this vocabulary is deliberately kept in sync with the backend's own `scenario_map.py` gender hints so the frontend's off-topic detector and the backend's actual gender detection never disagree on the same word.
+Rather than maintaining fragile client-side regexes, the frontend delegates preference extraction entirely to the backend's unified 3-layer pipeline (`POST /api/v1/extract-preferences`). On each message, the frontend joins user messages to form a combined history query, sends it to the backend, and receives a structured preferences object (`ExtractedPreferencesResponse`). This single API call extracts all 9 preference dimensions (gender, scenarios, note families, avoid notes, longevity, projection, budget, age, skin type) using a robust backend pipeline (regex → embedding scenarios → Groq LLM fallback), ensuring client and server logic are never out of sync.
 
 ### 4.2 Asking What's Missing (`buildClarifyingQuestion`, `wasAsked`)
 
