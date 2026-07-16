@@ -88,6 +88,9 @@ class PerfumeDetailResponse(BaseModel):
         "is inferred from main_accords (see classify_accord_tiers), not real Fragrantica note tags."
     )
 
+class ClassifyIntentRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500, description="User query to classify")
+
 class HealthResponse(BaseModel):
     status: str
     db_connected: bool

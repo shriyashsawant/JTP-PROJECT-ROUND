@@ -25,18 +25,29 @@ class RateLimiter:
         self._last_refill = time.monotonic()
         self._lock = asyncio.Lock()
 
-    async def try_consume(self, tokens: float = 1.0) -> bool:
-        """True if `tokens` were available and consumed; False (caller should
-        reject with 429) if the bucket didn't have enough."""
+    @property
+    def capacity(self) -> float:
+        return self._capacity
+
+    async def try_consume(self, tokens: float = 1.0) -> tuple[bool, int, int]:
+        """Returns (allowed, remaining_tokens, reset_seconds). `allowed` is
+        True if `tokens` were consumed; False if the bucket didn't have enough.
+        `remaining_tokens` is the count left (floor), `reset_seconds` is how
+        long until a full refill (for rate-limit response headers)."""
         async with self._lock:
             now = time.monotonic()
             elapsed = now - self._last_refill
             self._tokens = min(self._capacity, self._tokens + elapsed * self._refill_rate)
             self._last_refill = now
-            if self._tokens >= tokens:
+            allowed = self._tokens >= tokens
+            if allowed:
                 self._tokens -= tokens
-                return True
-            return False
+            remaining = max(0, int(self._tokens))
+            if self._refill_rate > 0 and self._tokens < self._capacity:
+                seconds_to_full = int((self._capacity - self._tokens) / self._refill_rate)
+            else:
+                seconds_to_full = 0
+            return (allowed, remaining, seconds_to_full)
 
 
 # Keyed by an arbitrary tuple (see app.api.auth: (api_key_id, client_ip) for
@@ -62,8 +73,8 @@ async def _get_bucket(key: tuple, capacity: float, refill_rate: float) -> RateLi
     return bucket
 
 
-async def check_rate_limit(key: tuple, requests_per_minute: int) -> bool:
-    """True if the request is allowed, False if the bucket is exhausted.
+async def check_rate_limit(key: tuple, requests_per_minute: int) -> tuple[bool, int, int]:
+    """Returns (allowed, remaining, reset_seconds).
     Capacity = requests_per_minute (a full minute's worth as an allowed
     burst), refilling continuously at requests_per_minute/60 tokens/sec -
     the simplest sensible mapping from an "N requests per minute" rate limit

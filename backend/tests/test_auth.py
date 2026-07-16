@@ -113,7 +113,7 @@ class TestRequireApiKeyUnit:
         ctx = await require_api_key(request, conn=FakeAuthConn(row))
         assert ctx.key_type == "secret"
 
-    async def test_publishable_key_with_disallowed_origin_raises_403(self):
+    async def test_publishable_key_with_disallowed_origin_raises_401(self):
         scope = {
             "type": "http",
             "headers": [(b"x-api-key", b"pk_live_ok"), (b"origin", b"http://evil.example")],
@@ -123,7 +123,7 @@ class TestRequireApiKeyUnit:
         row = _key_row(key_type="publishable", allowed_origins=["http://localhost:3000"])
         with pytest.raises(HTTPException) as exc_info:
             await require_api_key(request, conn=FakeAuthConn(row))
-        assert exc_info.value.status_code == 403
+        assert exc_info.value.status_code == 401
 
     async def test_publishable_key_with_allowed_origin_succeeds(self):
         scope = {

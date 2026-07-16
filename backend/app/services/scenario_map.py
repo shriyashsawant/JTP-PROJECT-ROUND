@@ -430,9 +430,78 @@ NOTE_FAMILIES = {
         "raspberry",
         "fruity notes",
         "osmanthus"
+    ],
+    "aromatic": [
+        "lavender",
+        "rosemary",
+        "thyme",
+        "sage",
+        "clary sage",
+        "basil",
+        "mint",
+        "aromatic notes",
+        "herbal",
+        "artemisia",
+        "tarragon",
+        "fougère",
+        "fern"
+    ],
+    "smoky": [
+        "smoke",
+        "incense",
+        "birch tar",
+        "leather",
+        "guaiac wood",
+        "cade oil",
+        "creosote",
+        "burnt sugar",
+        "oud"
+    ],
+    "powdery": [
+        "iris",
+        "violet",
+        "orris root",
+        "musk",
+        "heliotrope",
+        "almond",
+        "vanilla",
+        "powdery notes",
+        "rice powder",
+        "talc"
+    ],
+    "balsamic": [
+        "labdanum",
+        "benzoin",
+        "myrrh",
+        "frankincense",
+        "peru balsam",
+        "tolu balsam",
+        "copaiba balsam",
+        "styrax",
+        "opoponax",
+        "vanilla",
+        "amber"
     ]
 }
 
+
+NOTE_FAMILY_LABELS = {
+    "citrus": "Citrus",
+    "floral": "Floral",
+    "woody": "Woody",
+    "oriental": "Oriental",
+    "fresh_aquatic": "Fresh & Aquatic",
+    "green": "Green",
+    "gourmand": "Gourmand",
+    "spicy": "Spicy",
+    "animalic": "Animalic",
+    "earthy": "Earthy",
+    "fruity": "Fruity",
+    "aromatic": "Aromatic",
+    "smoky": "Smoky",
+    "powdery": "Powdery",
+    "balsamic": "Balsamic",
+}
 
 SKIN_TYPE_MODIFIERS = {
     "dry": {
@@ -636,6 +705,8 @@ def estimate_hours_numeric(longevity_score) -> float:
     if longevity_score is None:
         return 4.0
     label = estimate_wear_hours(longevity_score)
+    if label == "Unknown":
+        return 4.0
     lo, hi = label.replace(" hours", "").replace("+", "-99").split("-")
     return (float(lo) + min(float(hi), float(lo) + 4)) / 2
 
@@ -730,12 +801,23 @@ SCENARIO_PERFORMANCE_DEFAULTS: dict[str, tuple[int, str]] = {
 
 
 def infer_performance_from_scenarios(scenarios: list[str] | None) -> tuple[int | None, str | None]:
-    """First matching scenario (in the order they were detected/given) wins -
-    a simple, predictable tie-break for a soft nudge, not a hard requirement
-    worth a more elaborate multi-scenario blending scheme. Returns
-    (None, None) if no detected scenario has a mapped default (e.g. an
-    unrecognized or empty scenario list)."""
+    """Blend performance defaults across ALL detected scenarios, not just the
+    first one - a multi-scenario query like 'office gym' needs hours long
+    enough for both (8 for office) and projection subtle enough for both
+    (light for gym & office), not just whichever scenario happens to sort
+    first. Takes the longest hours requirement across matched scenarios
+    (covering all of them) and the most conservative (quietest) projection
+    (avoiding a gym+office search defaulting to strong). Returns
+    (None, None) if no scenario has a mapped default."""
+    max_hours = None
+    most_subtle = None
+    projection_rank = {"light": 0, "moderate": 1, "strong": 2}
     for s in scenarios or []:
-        if s in SCENARIO_PERFORMANCE_DEFAULTS:
-            return SCENARIO_PERFORMANCE_DEFAULTS[s]
-    return None, None
+        if s not in SCENARIO_PERFORMANCE_DEFAULTS:
+            continue
+        h, proj = SCENARIO_PERFORMANCE_DEFAULTS[s]
+        if max_hours is None or h > max_hours:
+            max_hours = h
+        if most_subtle is None or (projection_rank.get(proj, 1) < projection_rank.get(most_subtle, 1)):
+            most_subtle = proj
+    return max_hours, most_subtle

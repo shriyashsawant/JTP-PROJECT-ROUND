@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.api.dependencies import close_db, get_db_pool
+from app.api.routes_classify import router as classify_router
 from app.api.routes_dupe import router as dupe_router
 from app.api.routes_search import router as search_router
 from app.core.config import settings
@@ -17,9 +19,11 @@ from app.core.metrics import (
     db_pool_connections_active,
     http_request_duration_seconds,
     http_requests_failed_total,
+    rate_limit_rejections_total,
     set_circuit_breaker_gauge,
 )
 from app.services.intent_detector import eager_init_scenario_embeddings
+from app.services.off_topic_classifier import eager_init as eager_init_off_topic_classifier
 from app.services.llm_enrichment import close_http_client, get_groq_breaker_state
 from app.services.ml_engine import get_model
 
@@ -34,9 +38,12 @@ async def lifespan(app: FastAPI):
     await get_db_pool()
     await asyncio.to_thread(get_model)
     await eager_init_scenario_embeddings()
+    await eager_init_off_topic_classifier()
     yield
     await close_db()
     await close_http_client()
+
+MAX_BODY_SIZE = 10 * 1024  # 10 KB — generous for any API call here
 
 app = FastAPI(
     title="AuraMatch AI",
@@ -44,6 +51,16 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def body_size_middleware(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit():
+        if int(content_length) > MAX_BODY_SIZE:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=413, content={"detail": "Request too large"})
+    return await call_next(request)
 
 
 def _route_template(request: Request) -> str:
@@ -90,6 +107,11 @@ async def request_logging_middleware(request: Request, call_next):
     logger.info("%s %s -> %d (%.1fms)", request.method, request.url.path, response.status_code, duration * 1000)
     http_request_duration_seconds.labels(route=_route_template(request), status=str(response.status_code)).observe(duration)
     response.headers["X-Request-ID"] = request_id
+    # Attach rate-limit headers set by auth.py's require_api_key dependency.
+    rl_headers = getattr(request.state, "rate_limit_headers", None)
+    if rl_headers:
+        for k, v in rl_headers:
+            response.headers[k] = v
     request_id_var.reset(token)
     return response
 
@@ -107,8 +129,26 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-API-Key"],
 )
 
+@app.middleware("http")
+async def https_redirect_middleware(request: Request, call_next):
+    """Redirect HTTP to HTTPS when not behind a trusted proxy (no
+    X-Forwarded-Proto header present). Only redirects external requests
+    (non-localhost hosts) so dev/test traffic on localhost:8000 is unaffected.
+    In production behind a reverse proxy that handles TLS termination, the
+    proxy sets X-Forwarded-Proto and this middleware skips the redirect so it
+    doesn't fight the proxy."""
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    host = request.headers.get("host", "")
+    is_local = host.startswith("localhost") or host.startswith("127.") or host == "test" or host.endswith(".local")
+    if request.url.scheme == "http" and forwarded_proto.lower() != "https" and not is_local:
+        url = request.url.replace(scheme="https")
+        return RedirectResponse(url=str(url), status_code=301)
+    return await call_next(request)
+
+
 app.include_router(search_router)
 app.include_router(dupe_router)
+app.include_router(classify_router)
 
 @app.get("/")
 async def root():

@@ -105,3 +105,6 @@ backend/data_sources_local/
 /skills-lock.json
 /package.json
 /package-lock.json
+
+# Test artifacts
+body.json

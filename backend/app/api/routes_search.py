@@ -216,4 +216,7 @@ async def context_search(
 @router.get("/health", response_model=HealthResponse)
 async def health_check(conn: Connection = Depends(get_db)):
     db_ok = await check_health(conn)
-    return {"status": "ok" if db_ok else "degraded", "db_connected": db_ok}
+    if not db_ok:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content={"status": "degraded", "db_connected": False})
+    return {"status": "ok", "db_connected": True}

@@ -149,6 +149,19 @@ export async function checkHealth(): Promise<HealthResponse> {
   return fetchAPI<HealthResponse>("/api/v1/health");
 }
 
+export interface IntentClassification {
+  is_fragrance: boolean;
+  method: string;
+  confidence: number;
+}
+
+export async function classifyIntent(text: string): Promise<IntentClassification> {
+  return fetchAPI<IntentClassification>("/api/v1/classify-intent", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 export async function getMetrics(): Promise<string> {
   const url = `${API_URL}/metrics`;
   const res = await fetch(url);

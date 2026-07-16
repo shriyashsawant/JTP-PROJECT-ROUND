@@ -67,6 +67,8 @@ For detailed system specs, refer to:
 
 AuraMatch AI is fully self-contained. No external API keys or cloud credentials are required to start the system.
 
+*Tested on Windows 11 (PowerShell) and macOS Sequoia (zsh) — Docker handles the OS abstraction so `docker compose up` works identically on both.*
+
 ### 3.1 Step 1: Clone the Repository
 ```bash
 git clone https://github.com/shriyashsawant/JTP-PROJECT-ROUND.git
@@ -87,11 +89,9 @@ docker compose up --build -d
 
 ### 3.4 Step 4: Configure Groq LLM Re-Ranking (Optional)
 To enable the AI-powered natural language explanations:
-1. **Locate the Project Root Directory**: Ensure you are in the main project folder (`JTP-PROJECT-ROUND/` which contains `docker-compose.yml`, `backend/`, and `frontend/`).
-2. **Create the Environment File**:
-   * **Exact Name**: The file must be named exactly `.env` (with a leading dot and no file extension like `.txt` or `.env.txt`).
-   * **Exact Path**: `JTP-PROJECT-ROUND/.env`
-3. **Configure the API Key**: Open the `.env` file in a text editor and add the following line:
+1. Get a free API key from the [Groq Console](https://console.groq.com/keys) — Create an account, go to **API Keys**, and click **Create API Key**.
+2. **Create the Environment File**: Name it exactly `.env` (with a leading dot, no extension like `.env.txt`) in the project root (`JTP-PROJECT-ROUND/`).
+3. **Configure the Key**: Open the `.env` file and add:
    ```env
    GROQ_API_KEY=gsk_your_groq_api_key_here
    ```
@@ -127,6 +127,7 @@ The ingestion pipeline deduplicates and processes data from the following declar
 | `POST` | `/api/v1/search/context` | Evaluates natural language query inputs along with explicit scenario and filter preferences. |
 | `POST` | `/api/v1/search/dupe` | Identifies affordable alternative scents within the specified budget limits. |
 | `GET` | `/api/v1/perfume/{id}` | Returns metadata, sillage/longevity scores, and scent pyramids for a selected perfume. |
+| `POST` | `/api/v1/classify-intent` | Checks whether a user's query is fragrance-related, using embedding similarity with optional Groq LLM fallback. Called by the frontend as a second-opinion when the regex off-topic detector flags a query. |
 | `GET` | `/api/v1/health` | Verifies database connectivity. |
 | `GET` | `/metrics` | Prometheus scrape target - HTTP latency/error rates, DB pool utilization, circuit-breaker state, rate-limit rejections. Unauthenticated, same convention as `/health`. |
 
@@ -139,7 +140,10 @@ The application is validated by a test suite comprising **287 unit and integrati
 To execute tests locally:
 ```bash
 cd backend
+# Windows (PowerShell):
 .venv\Scripts\python -m pytest
+# Linux/macOS:
+# .venv/bin/python -m pytest
 ```
 
 Mypy type checking and Ruff lint configurations are fully clean across core service files.
@@ -148,7 +152,7 @@ Mypy type checking and Ruff lint configurations are fully clean across core serv
 
 ## 7. Authenticating API Requests
 
-Every search/lookup endpoint (`/search/context`, `/search/dupe`, `/perfume/{id}`) requires an `X-API-Key` header - `/health` is the only exception. The web portal already has its own key baked in at build time, so using [http://localhost:3000](http://localhost:3000) works with no extra steps.
+Every search/lookup endpoint (`/search/context`, `/search/dupe`, `/perfume/{id}`) requires an `X-API-Key` header - `/health` and `/classify-intent` are the only exceptions. The web portal already has its own key baked in at build time, so using [http://localhost:3000](http://localhost:3000) works with no extra steps.
 
 To call the API directly (via `curl`, Postman, or Swagger's "Try it out"), issue yourself a key first:
 ```bash

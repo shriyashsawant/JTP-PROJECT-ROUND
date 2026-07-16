@@ -28,6 +28,14 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
+def _rate_limit_headers(remaining: int, reset_seconds: int, limit: int) -> dict[str, str]:
+    return {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Reset": str(reset_seconds),
+    }
+
+
 def origin_allowed(origin: str | None, allowed_origins: list[str] | None) -> bool:
     """Pure function so it's unit-testable independent of the dependency/DB.
     No allowlist configured, or no Origin header sent, means fail closed -
@@ -59,23 +67,24 @@ async def require_api_key(request: Request, conn: Connection = Depends(get_db)) 
         raise HTTPException(401, detail="Invalid or revoked API key")
 
     bucket_key: tuple
+    rate_limit = row["rate_limit_per_minute"]
     if row["key_type"] == "publishable":
         origin = request.headers.get("origin")
         if not origin_allowed(origin, row["allowed_origins"]):
-            raise HTTPException(403, detail="Origin not allowed for this API key")
-        # One publishable key is shared by every real visitor of the
-        # frontend - bucket by (key, client_ip) so an exfiltrated-key abuser
-        # hammering it doesn't throttle out every legitimate user sharing
-        # that same key (see app/services/rate_limiter.py).
+            raise HTTPException(401, detail="Invalid or revoked API key")
         client_ip = request.client.host if request.client else "unknown"
         bucket_key = (row["id"], client_ip)
     else:
-        # One secret key = one partner = one bucket; a partner's IP may
-        # legitimately rotate, so it isn't part of the key.
         bucket_key = (row["id"],)
 
-    if not await check_rate_limit(bucket_key, row["rate_limit_per_minute"]):
-        rate_limit_rejections_total.labels(key_type=row["key_type"]).inc()
-        raise HTTPException(429, detail="Rate limit exceeded")
+    allowed, remaining, reset_seconds = await check_rate_limit(bucket_key, rate_limit)
+    rl_headers = _rate_limit_headers(remaining, reset_seconds, rate_limit)
+    rl_headers_list = [(k, v) for k, v in rl_headers.items()]
+    request.state.rate_limit_headers = rl_headers_list
 
+    if not allowed:
+        rate_limit_rejections_total.labels(key_type=row["key_type"]).inc()
+        raise HTTPException(429, detail="Rate limit exceeded", headers=rl_headers)
+
+    request.state.api_key_id = row["id"]
     return ApiKeyContext(id=row["id"], key_type=row["key_type"], label=row["label"])

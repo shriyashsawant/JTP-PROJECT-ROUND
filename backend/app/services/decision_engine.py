@@ -12,6 +12,7 @@ from app.services.scenario_map import (
     BASE_ACCORDS,
     BASE_TIER_FAMILIES,
     NOTE_FAMILIES,
+    NOTE_FAMILY_LABELS,
     SCENARIO_MAP,
     TOP_ACCORDS,
     TOP_TIER_FAMILIES,
@@ -871,7 +872,8 @@ def _build_breakdown(
     elif note_match > 0.15:
         items.append({"label": "Scent profile match", "status": _breakdown_status(note_match, 0.6, 0.25)})
     if note_families:
-        items.append({"label": f"Scent preference: {', '.join(note_families)}", "status": _breakdown_status(note_family_fit, 0.75, 0.4)})
+        family_labels = [NOTE_FAMILY_LABELS.get(f, f.replace("_", " ").title()) for f in note_families]
+        items.append({"label": f"Scent preference: {', '.join(family_labels)}", "status": _breakdown_status(note_family_fit, 0.75, 0.4)})
     if has_bridge:
         items.append({"label": "Fresh opening, long-lasting base", "status": _breakdown_status(bridge_fit, 0.9, 0.4)})
     if hours_required:
@@ -957,7 +959,7 @@ def rank_and_explain(
     has_age = age is not None
     has_note_family = bool(note_families and any(f in NOTE_FAMILIES for f in note_families))
     wants_fresh = bool(set(scenarios or []) & FRESH_SCENARIOS) or bool(set(note_families or []) & FRESH_NOTE_FAMILIES)
-    wants_strong_longevity = bool(hours_required and hours_required >= 6)
+    wants_strong_longevity = hours_required is not None and hours_required >= 6
     has_bridge = wants_fresh and wants_strong_longevity
 
     for r in results:

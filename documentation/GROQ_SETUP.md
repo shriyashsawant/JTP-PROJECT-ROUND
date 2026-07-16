@@ -9,10 +9,9 @@ If no Groq key is configured, or if the Groq API times out or fails (safeguarded
 ## 1. Obtaining a Groq API Key
 
 To get a Groq API key:
-1. Navigate to the [Groq Console](https://console.groq.com/).
-2. Create an account or sign in.
-3. Go to the **API Keys** section in the sidebar.
-4. Click **Create API Key**, give it a name (e.g., `AuraMatch-Dev`), and copy the generated key (starts with `gsk_`).
+1. Go directly to the [Groq API Keys page](https://console.groq.com/keys).
+2. Create an account or sign in if prompted.
+3. Click **Create API Key**, give it a name (e.g., `AuraMatch-Dev`), and copy the generated key (starts with `gsk_`).
 
 ---
 

@@ -131,7 +131,7 @@ const HAS_DIGIT_RE = /\d/;
 // the long run" is common enough idiomatic phrasing that it would silently
 // (and wrongly) mark occasion as answered on a message that never mentioned
 // one.
-const OCCASION_RE = /\b(gym|work\s*out|exercise|training|sports?|jog(?:ging)?|office|work|desk\s*job|workplace|meeting|professional|9.?to.?5|commute|date|part(?:y|ies)|night\s*out|club(?:bing)?|rave|wedding|festival|celebration|reception|daily|everyday|every\s*day|regular\s*wear|casual|summer|hot\s*weather|heatwave|winter|cold\s*weather|snow|chilly|monsoon|rainy|humid|spring|autumn|fall|evening|dinner|after\s*work|night|formal|travel|college|school)s?\b/i;
+const OCCASION_RE = /\b(gym|work\s*out|exercise|training|sports?|jog(?:ging)?|office|work|desk\s*job|workplace|meeting|professional|9.?to.?5|commute|date|part(?:y|ies)|night\s*out|club(?:bing)?|rave|wedding|festival|celebration|reception|daily|everyday|every\s*day|regular\s*wear|casual|summer|hot\s*weather|heatwave|winter|cold\s*weather|snow|chilly|monsoon|rainy|humid|spring|autumn|fall|evening|dinner|restaurant|after\s*work|night|formal|travel|college|school)s?\b/i;
 // Regression: several of these only matched the bare noun/root form, missing
 // the adjective form people actually type - "musky" (which is also the
 // backend's own canonical accord-family term throughout scenario_map.py, not
@@ -184,6 +184,10 @@ const SCENT_TO_NOTE_FAMILIES: Record<string, string[]> = {
   fruity: ["fruity"], tropical: ["fruity"],
   amber: ["oriental"], incense: ["oriental"],
   tobacco: ["woody", "oriental"],
+  aromatic: ["aromatic"],
+  smoky: ["smoky"],
+  powdery: ["powdery"],
+  balsamic: ["balsamic"],
 };
 
 // Scans the WHOLE active conversation (not just the first SCENT_RE match
@@ -847,15 +851,26 @@ export default function SearchPage() {
     setInput("");
 
     if (looksOffTopic(nextMessages)) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "I'm AuraMatch, a fragrance recommendation assistant - I can help you find a perfume or a cheaper alternative to one, but I can't help with that. What kind of scent are you looking for?",
-        },
-      ]);
-      return;
+      // Regex says off-topic. Ask the backend classifier as a second opinion.
+      const { classifyIntent } = await import("@/lib/api");
+      let isFragrance = false;
+      try {
+        const result = await classifyIntent(trimmed);
+        isFragrance = result.is_fragrance;
+      } catch {
+        isFragrance = true;
+      }
+      if (!isFragrance) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "I'm AuraMatch, a fragrance recommendation assistant - I can help you find a perfume or a cheaper alternative to one, but I can't help with that. What kind of scent are you looking for?",
+          },
+        ]);
+        return;
+      }
     }
 
     const clarification = buildClarifyingQuestion(nextMessages);

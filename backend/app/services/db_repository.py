@@ -9,7 +9,7 @@ from app.services.scenario_map import classify_accord_tiers, classify_note_tiers
 # silently drift apart) with a few words specific to this lookup's own
 # dupe-phrasing vocabulary.
 _LOOKUP_STOP_WORDS = MATCH_STOP_WORDS | {
-    "cheaper", "alternative", "version", "affordable", "budget", "clone", "similar", "instead", "dupe",
+    "cheaper", "alternative", "version", "affordable", "budget", "clone", "similar", "instead", "dupe", "dupes",
 }
 
 
@@ -158,10 +158,10 @@ def _format_perfume_row(r) -> dict:
         "base_notes": base_notes,
         "type": r["type"] or _parse_concentration_type(r["perfume"]),
         "gender": r["gender"],
-        "longevity_score": float(r["longevity_score"]) if r["longevity_score"] else None,
-        "sillage_score": float(r["sillage_score"]) if r["sillage_score"] else None,
-        "similarity": float(r["similarity"]) if r.get("similarity") else 0,
-        "match_score": round(float(r["similarity"]) * 100, 1) if r.get("similarity") else 0,
+        "longevity_score": float(r["longevity_score"]) if r["longevity_score"] is not None else None,
+        "sillage_score": float(r["sillage_score"]) if r["sillage_score"] is not None else None,
+        "similarity": float(r["similarity"]) if r.get("similarity") is not None else 0,
+        "match_score": round(float(r["similarity"]) * 100, 1) if r.get("similarity") is not None else 0,
         "savings": None,
         "url": r.get("url"),
         "country": r.get("country"),
