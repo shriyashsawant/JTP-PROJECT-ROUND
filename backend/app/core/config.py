@@ -5,7 +5,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
     database_url: str = "postgresql://auramatch:auramatch_secret@db:5432/auramatch"
-    model_name: str = "all-MiniLM-L6-v2"
+    database_reader_url: str | None = None
+    model_name: str = "BAAI/bge-small-en-v1.5"
+    # BGE models need a query instruction prefix for optimal retrieval.
+    # Automatically set based on model family; can be overridden per-model.
+    query_instruction: str = "Represent this sentence for searching relevant passages: "
     app_name: str = "AuraMatch AI"
     debug: bool = True
     # Optional - LLM re-ranking/explanation layer is fully skipped when unset.

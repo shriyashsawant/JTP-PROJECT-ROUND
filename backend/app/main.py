@@ -12,8 +12,11 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from app.api.dependencies import close_db, get_db_pool
 from app.api.routes_classify import router as classify_router
 from app.api.routes_dupe import router as dupe_router
+from app.api.routes_events import router as events_router
+from app.api.routes_image import router as image_router
 from app.api.routes_search import router as search_router
 from app.core.config import settings
+from app.core.failure_injection import FailureInjectionMiddleware
 from app.core.logging_config import request_id_var, setup_logging
 from app.core.metrics import (
     db_pool_connections_active,
@@ -22,10 +25,13 @@ from app.core.metrics import (
     rate_limit_rejections_total,
     set_circuit_breaker_gauge,
 )
+from app.services.hnsw_tuner import calibrate as calibrate_hnsw
 from app.services.intent_detector import eager_init_scenario_embeddings
 from app.services.off_topic_classifier import eager_init as eager_init_off_topic_classifier
+from app.services.embedding_sweeper import start_sweeper, stop_sweeper
+from app.services.image_search import close_image_client
 from app.services.llm_enrichment import close_http_client, get_groq_breaker_state
-from app.services.ml_engine import get_model
+from app.services.ml_engine import generate_embedding_async, get_model
 
 setup_logging()
 logger = logging.getLogger("auramatch.access")
@@ -35,13 +41,31 @@ logger = logging.getLogger("auramatch.access")
 async def lifespan(app: FastAPI):
     # Warm up the DB pool and the embedding model at boot so the first real
     # user request doesn't pay for pool creation + a 4-6s cold model load.
-    await get_db_pool()
+    pool = await get_db_pool()
     await asyncio.to_thread(get_model)
     await eager_init_scenario_embeddings()
     await eager_init_off_topic_classifier()
+    # Calibrate HNSW ef_search for the current data distribution.
+    async def _exec(sql: str, *args):
+        async with pool.acquire() as c:
+            return await c.fetch(sql, *args)
+    async def _exec_with_ef(ef_search: int, sql: str, *args):
+        async with pool.acquire() as c:
+            await c.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
+            return await c.fetch(sql, *args)
+    await calibrate_hnsw(generate_embedding_async, _exec, _exec_with_ef)
+    # Start background sweeper for incremental embedding updates.
+    sweep_task = asyncio.create_task(start_sweeper(pool))
     yield
+    stop_sweeper()
+    sweep_task.cancel()
+    try:
+        await sweep_task
+    except asyncio.CancelledError:
+        pass
     await close_db()
     await close_http_client()
+    await close_image_client()
 
 MAX_BODY_SIZE = 10 * 1024  # 10 KB — generous for any API call here
 
@@ -116,6 +140,8 @@ async def request_logging_middleware(request: Request, call_next):
     return response
 
 
+app.add_middleware(FailureInjectionMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -149,6 +175,8 @@ async def https_redirect_middleware(request: Request, call_next):
 app.include_router(search_router)
 app.include_router(dupe_router)
 app.include_router(classify_router)
+app.include_router(events_router)
+app.include_router(image_router)
 
 @app.get("/")
 async def root():

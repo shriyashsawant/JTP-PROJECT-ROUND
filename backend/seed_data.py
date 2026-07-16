@@ -26,7 +26,7 @@ from app.ingestion.contracts import normalize_name
 # single batch run always has.
 SOURCE_PRIORITY = {"india_mainstream": 5, "nandini": 4, "fra_cleaned": 3, "fra_perfumes": 2, "da_fragrance": 1}
 
-EMBEDDING_MODEL_VERSION = "all-MiniLM-L6-v2"
+EMBEDDING_MODEL_VERSION = "BAAI/bge-small-en-v1.5"
 
 # ---------------------------------------------------------------------------
 # INR pricing tiers

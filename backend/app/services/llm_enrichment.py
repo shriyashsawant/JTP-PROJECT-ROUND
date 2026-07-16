@@ -56,16 +56,25 @@ async def close_http_client():
         _client = None
 
 
-def _build_prompt(query: str, candidates: list[dict], limit: int) -> str:
+DETERMINISTIC_WEIGHT = 0.7
+LLM_WEIGHT = 0.3
+
+
+def _build_prompt(query: str, candidates: list[dict], limit: int, personalization_context: str = "") -> str:
     lines = [
         f'User is looking for: "{query}"',
         "",
+    ]
+    if personalization_context:
+        lines.append(personalization_context.strip())
+        lines.append("")
+    lines.append(
         f"Here are {len(candidates)} real candidate perfumes from our database, "
         "each with its actual accords, notes, and a computed match score "
         "(0-100) from our own scoring engine (occasion/longevity/projection/"
-        "note-match/price fit already factored in):",
-        "",
-    ]
+        "note-match/price fit already factored in):"
+    )
+    lines.append("")
     for c in candidates:
         lines.append(json.dumps({
             "id": c["id"], "brand": c["brand"], "perfume": c["perfume"],
@@ -85,11 +94,15 @@ def _build_prompt(query: str, candidates: list[dict], limit: int) -> str:
         "user expects a range of real choices, not one brand's catalog. "
         "For each pick, write a 1-2 sentence expert fragrance-consultant "
         "explanation using ONLY the accords/notes given above - do not "
-        "invent notes, ratings, or facts not present in the data."
+        "invent notes, ratings, or facts not present in the data. "
+        "Also assign an adjusted_score (0-100) that reflects your own "
+        "judgment of how well this perfume matches the user's request, "
+        "given the context of all candidates."
     )
     lines.append(
         'Respond with ONLY strict JSON: {"results": [{"id": <int>, '
-        '"explanation": "<text>"}, ...]} - no markdown, no commentary.'
+        '"explanation": "<text>", "adjusted_score": <float>}, ...]} - '
+        "no markdown, no commentary. adjusted_score must be 0-100."
     )
     return "\n".join(lines)
 
@@ -118,14 +131,18 @@ async def _call_groq(prompt: str) -> dict:
     return json.loads(content)
 
 
-async def enhance_with_llm(query: str, candidates: list[dict], limit: int) -> list[dict] | None:
+async def enhance_with_llm(query: str, candidates: list[dict], limit: int, personalization_context: str = "") -> list[dict] | None:
     """Returns a re-ranked/re-explained subset of `candidates` (the same real
     dicts, untouched except for `explanation`), or None on any failure -
-    callers must fall back to the deterministic order untouched in that case."""
+    callers must fall back to the deterministic order untouched in that case.
+
+    `personalization_context` is an optional string describing the user's
+    session preferences (brand affinity, note families, price sensitivity)
+    that gets injected into the LLM prompt to tune ranking."""
     if not settings.groq_api_key or not candidates:
         return None
     try:
-        prompt = _build_prompt(query, candidates, limit)
+        prompt = _build_prompt(query, candidates, limit, personalization_context)
         parsed = await _groq_breaker.call(_call_groq, prompt)
     except CircuitBreakerOpenError:
         # Groq has failed repeatedly and recently - skip straight to the
@@ -154,6 +171,12 @@ async def enhance_with_llm(query: str, candidates: list[dict], limit: int) -> li
         explanation = pick.get("explanation")
         if explanation and isinstance(explanation, str):
             enriched["explanation"] = explanation
+        adjusted_score = pick.get("adjusted_score")
+        if adjusted_score is not None and isinstance(adjusted_score, (int, float)):
+            clipped = max(0.0, min(100.0, float(adjusted_score)))
+            base = enriched.get("match_score", 0) or 0
+            blended = round(DETERMINISTIC_WEIGHT * base + LLM_WEIGHT * clipped, 1)
+            enriched["match_score"] = min(100.0, blended)
         out.append(enriched)
         if len(out) >= limit:
             break

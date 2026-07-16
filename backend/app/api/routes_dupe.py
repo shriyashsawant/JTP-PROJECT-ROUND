@@ -1,8 +1,9 @@
 from asyncpg.connection import Connection
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app.api.auth import require_api_key
-from app.api.dependencies import get_db
+from app.api.dependencies import get_db, get_reader_db, get_ab_test
+from app.services.ab_testing import AbTest
 from app.core.config import settings
 from app.models.schemas import BudgetSearchRequest, PerfumeDetailResponse, PerfumeResponse
 from app.services.db_repository import find_reference_perfume, get_perfume_by_id, search_by_budget
@@ -19,13 +20,16 @@ from app.services.intent_detector import (
 from app.services.llm_enrichment import enhance_with_llm
 from app.services.ml_engine import build_budget_query
 from app.services.scenario_map import infer_performance_from_scenarios
+from app.services.user_profile import build_personalization_context, build_profile
 
 router = APIRouter(prefix="/api/v1", tags=["Dupe Engine"])
 
 @router.post("/search/dupe", response_model=list[PerfumeResponse])
 async def dupe_search(
-    req: BudgetSearchRequest, conn: Connection = Depends(get_db),
+    req: BudgetSearchRequest, request: Request, response: Response,
+    conn: Connection = Depends(get_reader_db),
     _key=Depends(require_api_key),
+    ab: AbTest = Depends(get_ab_test),
 ):
     """Dupe Engine — find affordable alternatives within budget.
 
@@ -140,7 +144,9 @@ async def dupe_search(
 
     if llm_enabled:
         llm_pick_count = min(req.limit, llm_pool_cap)
-        enhanced = await enhance_with_llm(req.query, results[:llm_pool_cap], llm_pick_count)
+        profile = await build_profile(conn, req.session_id)
+        personalization_ctx = build_personalization_context(profile)
+        enhanced = await enhance_with_llm(req.query, results[:llm_pool_cap], llm_pick_count, personalization_ctx)
         if enhanced:
             # The LLM re-ranks by its own relevance judgment, which would
             # otherwise silently discard the nearest-to-budget/cheapest-first
@@ -155,12 +161,14 @@ async def dupe_search(
                 seen_ids = {r["id"] for r in final}
                 remainder = [r for r in pre_diversity_results if r["id"] not in seen_ids]
                 final = final + cap_per_brand(remainder, req.limit - len(final))
+            response.headers["X-AuraMatch-Variant"] = ab.active_variant
             return final
     final = cap_per_brand(results, req.limit)
     if len(final) < req.limit:
         seen_ids = {r["id"] for r in final}
         remainder = [r for r in pre_diversity_results if r["id"] not in seen_ids]
         final = final + cap_per_brand(remainder, req.limit - len(final))
+    response.headers["X-AuraMatch-Variant"] = ab.active_variant
     return final
 
 @router.get("/perfume/{perfume_id}", response_model=PerfumeDetailResponse)

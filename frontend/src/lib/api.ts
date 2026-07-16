@@ -65,6 +65,7 @@ export interface ContextSearchRequest {
   hours_required?: number;
   projection_preference?: string;
   deal_breaker?: boolean;
+  session_id?: string;
 }
 
 export interface DupeSearchRequest {
@@ -79,6 +80,7 @@ export interface DupeSearchRequest {
   hours_required?: number;
   projection_preference?: string;
   deal_breaker?: boolean;
+  session_id?: string;
 }
 
 export interface HealthResponse {
@@ -159,6 +161,28 @@ export async function classifyIntent(text: string): Promise<IntentClassification
   return fetchAPI<IntentClassification>("/api/v1/classify-intent", {
     method: "POST",
     body: JSON.stringify({ text }),
+  });
+}
+
+export interface ExtractedPreferencesResponse {
+  gender: "male" | "female" | "unisex" | null;
+  scenarios: string[];
+  note_families: string[];
+  avoid_notes: string[];
+  hours_required: number | null;
+  longevity_requested: boolean;
+  projection_preference: "light" | "moderate" | "strong" | null;
+  budget: number | null;
+  age: number | null;
+  skin_type: "dry" | "oily" | "normal" | null;
+  is_dupe_intent: boolean;
+  is_off_topic: boolean;
+}
+
+export async function extractPreferences(text: string, session_id?: string): Promise<ExtractedPreferencesResponse> {
+  return fetchAPI<ExtractedPreferencesResponse>("/api/v1/extract-preferences", {
+    method: "POST",
+    body: JSON.stringify({ text, session_id }),
   });
 }
 

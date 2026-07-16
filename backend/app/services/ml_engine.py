@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.services.scenario_map import NOTE_FAMILIES, SCENARIO_MAP, SKIN_TYPE_MODIFIERS
 
 _model = None
+_INSTRUCTION_PREFIX = settings.query_instruction
 
 def get_model():
     global _model
@@ -13,13 +14,30 @@ def get_model():
         _model = SentenceTransformer(settings.model_name)
     return _model
 
-def generate_embedding(text: str) -> list[float]:
+def _is_bge_model() -> bool:
+    """BGE models (BAAI/bge-*) need instruction prefixes for optimal retrieval.
+    Other SentenceTransformer models (all-MiniLM, etc) do not."""
+    return "bge" in settings.model_name.lower()
+
+def generate_embedding(text: str, is_query: bool = False) -> list[float]:
+    """Generate embedding. For BGE models, prepend the query instruction
+    when embedding a search query (not when embedding stored documents)."""
+    if _is_bge_model() and is_query:
+        text = _INSTRUCTION_PREFIX + text
     return get_model().encode(text).tolist()
 
-async def generate_embedding_async(text: str) -> list[float]:
-    """CPU-bound SentenceTransformer inference offloaded to a worker thread
-    so it doesn't block the event loop while other requests are in flight."""
-    return await asyncio.to_thread(generate_embedding, text)
+async def generate_embedding_async(text: str, is_query: bool = False) -> list[float]:
+    """CPU-bound SentenceTransformer inference offloaded to a worker thread.
+    `is_query=True` prepends the BGE query instruction for retrieval queries."""
+    return await asyncio.to_thread(generate_embedding, text, is_query)
+
+def generate_document_embedding(text: str) -> list[float]:
+    """Embed a stored document (perfume catalog text). No instruction prefix."""
+    return get_model().encode(text).tolist()
+
+async def generate_document_embedding_async(text: str) -> list[float]:
+    """Embed a stored document asynchronously."""
+    return await asyncio.to_thread(generate_document_embedding, text)
 
 def _scenario_terms(scenarios: list[str] | None, key: str, cap: int) -> list[str]:
     """Union accords/notes across every matched scenario (deduped, capped)."""

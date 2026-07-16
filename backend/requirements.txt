@@ -8,6 +8,8 @@ python-dotenv==1.0.1
 numpy==2.2.1
 httpx==0.28.1
 prometheus-client==0.25.0
+structlog==25.1.0
+Pillow==11.1.0
 
 # Schema migrations (backend/app/db/migrations/). Alembic needs its own
 # synchronous driver (psycopg2) for running DDL - independent of asyncpg,

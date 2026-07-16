@@ -125,17 +125,17 @@ async def eager_init():
     if _fragrance_embeddings is not None and _off_topic_embeddings is not None:
         return
     try:
-        from app.services.ml_engine import generate_embedding_async
+        from app.services.ml_engine import generate_document_embedding_async
 
         frag_vecs = []
         for a in FRAGRANCE_ANCHORS:
-            emb = await generate_embedding_async(a)
+            emb = await generate_document_embedding_async(a)
             frag_vecs.append(np.array(emb))
         _fragrance_embeddings = frag_vecs
 
         off_vecs = []
         for a in OFF_TOPIC_ANCHORS:
-            emb = await generate_embedding_async(a)
+            emb = await generate_document_embedding_async(a)
             off_vecs.append(np.array(emb))
         _off_topic_embeddings = off_vecs
 
@@ -158,7 +158,7 @@ async def _classify_embedding(text: str) -> tuple[bool, float]:
 
     from app.services.ml_engine import generate_embedding_async
 
-    q_emb = np.array(await generate_embedding_async(text))
+    q_emb = np.array(await generate_embedding_async(text, is_query=True))
     frag_sim = max(_cosine_sim(q_emb, fe) for fe in _fragrance_embeddings)
     off_sim = max(_cosine_sim(q_emb, oe) for oe in _off_topic_embeddings)
     return frag_sim > off_sim, abs(frag_sim - off_sim)

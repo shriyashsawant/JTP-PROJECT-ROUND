@@ -9,8 +9,9 @@ Pydantic — no DB or API key needed, but still protected against abuse.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.models.schemas import ClassifyIntentRequest
+from app.models.schemas import ClassifyIntentRequest, PreferenceExtractionRequest, PreferenceExtractionResponse
 from app.services.off_topic_classifier import classify
+from app.services.preference_extractor import extract_preferences
 from app.services.rate_limiter import check_rate_limit
 
 router = APIRouter(prefix="/api/v1", tags=["classify"])
@@ -23,3 +24,12 @@ async def classify_intent(request: Request, body: ClassifyIntentRequest):
     if not allowed:
         raise HTTPException(429, detail="Rate limit exceeded")
     return await classify(body.text)
+
+
+@router.post("/extract-preferences", response_model=PreferenceExtractionResponse)
+async def extract_prefs(request: Request, body: PreferenceExtractionRequest):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    allowed, _, _ = await check_rate_limit(("extract_prefs", client_ip), 60)
+    if not allowed:
+        raise HTTPException(429, detail="Rate limit exceeded")
+    return await extract_preferences(body.text)

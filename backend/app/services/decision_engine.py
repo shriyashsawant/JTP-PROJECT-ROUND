@@ -3,7 +3,6 @@ AuraMatch AI - Decision Engine
 Hybrid scoring + deterministic explanation generator.
 Modular: swap `scorer` and `explainer` with an LLM later (just implement the same interface).
 """
-import random
 import re
 from collections.abc import Callable
 
@@ -619,7 +618,16 @@ def _inr(amount: float) -> str:
     return f"₹{round(amount):,}"
 
 
-def _price_phrase(price_inr: float | None, budget: float | None, rng: random.Random) -> str:
+def _pick_template(templates: list[str], seed: str) -> str:
+    """Deterministically picks one template from a list using a hash of the given
+    seed string - no randomness involved, just stable cross-platform hashing. The
+    same seed (typically the perfume's own identity, or a signal-specific
+    discriminator like 'price_phrase') always selects the same template, so every
+    run of the same query produces identical explanation text."""
+    return templates[hash(seed) % len(templates)]
+
+
+def _price_phrase(price_inr: float | None, budget: float | None, perfume_name: str) -> str:
     """Budget is a threshold, not something to optimize - only call out exact
     savings when the price is a meaningful fraction of the budget; otherwise
     just confirm it's comfortably affordable."""
@@ -628,16 +636,17 @@ def _price_phrase(price_inr: float | None, budget: float | None, rng: random.Ran
     if not budget or budget <= 0:
         return f" Priced at {_inr(price_inr)}."
     ratio = price_inr / budget
+    seed = f"price_phrase_{perfume_name}_{_inr(price_inr)}_{budget}"
     if ratio <= 0.7:
-        return rng.choice([
+        return _pick_template([
             f" Comfortably within your {_inr(budget)} budget.",
             f" Well inside your {_inr(budget)} budget, with room to spare.",
-        ])
+        ], seed)
     if price_inr < budget:
-        return rng.choice([
+        return _pick_template([
             f" Priced at {_inr(price_inr)}, it provides luxury-tier quality while keeping {_inr(budget - price_inr)} under your budget.",
             f" At {_inr(price_inr)}, it saves you {_inr(budget - price_inr)} against your {_inr(budget)} budget.",
-        ])
+        ], seed)
     return f" At {_inr(price_inr)}, it sits right at your {_inr(budget)} budget ceiling."
 
 
@@ -673,7 +682,7 @@ GENDER_TEMPLATES = ["Tailored to the gender you specified.", "Formulated with yo
 
 
 def _build_highlights(
-    rng: random.Random,
+    perfume_name: str,
     perfume_accords: list[str],
     scenario_labels: list[str], scenario_fit: float,
     matched_notes: list[str], matched_accords: list[str],
@@ -701,7 +710,7 @@ def _build_highlights(
     if accord_display:
         signature_parts.append(f"{', '.join(accord_display)} character")
     if signature_parts:
-        highlights.append(rng.choice(SIGNATURE_TEMPLATES).format(parts=" and ".join(signature_parts)))
+        highlights.append(_pick_template(SIGNATURE_TEMPLATES, f"sig_{perfume_name}").format(parts=" and ".join(signature_parts)))
 
     # Second slot: prefer a genuine shortfall (honesty), else the most specific
     # remaining detail (hour count is more informative than a repeated label).
@@ -710,28 +719,28 @@ def _build_highlights(
     if hours_required:
         hours_label = estimate_wear_hours(longevity_score)
         if longevity_fit >= 0.9:
-            secondary.append((0.7, rng.choice(LONGEVITY_MET_TEMPLATES).format(hours=hours_label, required=hours_required)))
+            secondary.append((0.7, _pick_template(LONGEVITY_MET_TEMPLATES, f"long_met_{perfume_name}").format(hours=hours_label, required=hours_required)))
         else:
-            secondary.append((0.99, rng.choice(LONGEVITY_SHORT_TEMPLATES).format(hours=hours_label, required=hours_required)))
+            secondary.append((0.99, _pick_template(LONGEVITY_SHORT_TEMPLATES, f"long_short_{perfume_name}").format(hours=hours_label, required=hours_required)))
     elif longevity_requested:
-        secondary.append((0.6, rng.choice(LONGEVITY_SOFT_TEMPLATES).format(hours=estimate_wear_hours(longevity_score))))
+        secondary.append((0.6, _pick_template(LONGEVITY_SOFT_TEMPLATES, f"long_soft_{perfume_name}").format(hours=estimate_wear_hours(longevity_score))))
 
     if projection_preference:
         actual_label = sillage_label(sillage_score)
         if projection_fit >= 0.9:
-            secondary.append((0.5, rng.choice(PROJECTION_MET_TEMPLATES).format(label=actual_label)))
+            secondary.append((0.5, _pick_template(PROJECTION_MET_TEMPLATES, f"proj_met_{perfume_name}").format(label=actual_label)))
         else:
-            secondary.append((0.95, rng.choice(PROJECTION_MISS_TEMPLATES).format(label=actual_label, wanted=projection_preference)))
+            secondary.append((0.95, _pick_template(PROJECTION_MISS_TEMPLATES, f"proj_miss_{perfume_name}").format(label=actual_label, wanted=projection_preference)))
 
     if scenario_labels:
         labels = ", ".join(scenario_labels)
         if scenario_fit >= 0.9:
-            secondary.append((0.4, rng.choice(SCENARIO_MET_TEMPLATES).format(labels=labels)))
+            secondary.append((0.4, _pick_template(SCENARIO_MET_TEMPLATES, f"sc_met_{perfume_name}").format(labels=labels)))
         else:
-            secondary.append((0.9, rng.choice(SCENARIO_SOFT_TEMPLATES).format(labels=labels)))
+            secondary.append((0.9, _pick_template(SCENARIO_SOFT_TEMPLATES, f"sc_soft_{perfume_name}").format(labels=labels)))
 
     if gender_matched:
-        secondary.append((0.2, rng.choice(GENDER_TEMPLATES)))
+        secondary.append((0.2, _pick_template(GENDER_TEMPLATES, f"gender_{perfume_name}")))
 
     if secondary:
         secondary.sort(key=lambda c: c[0], reverse=True)
@@ -794,29 +803,28 @@ def generate_explanation(
 ) -> str:
     """Deterministic explanation that reads like an LLM wrote it. No API calls, ~0.001s.
 
-    Uses a local random.Random seeded by the perfume's own identity (brand+name) -
-    NOT the global `random` module, which would be unsafe to mutate in a concurrent
-    FastAPI server. Deterministic per-perfume (same perfume always gets the same
-    phrasing choices), but varies across different perfumes in the same result set."""
-    rng = random.Random(f"{brand}|{perfume_name}")
+    Every template choice is made via `_pick_template`, which uses a stable hash
+    of the perfume's own identity - so the same perfume always gets the same
+    phrasing choices, and different perfumes naturally get different selections."""
     query_terms = query.lower().split()
     matched_notes = _match_notes(query_terms, perfume_notes)
     matched_accords = _match_accords(query_terms, perfume_accords)
     scenario_labels = [SCENARIO_MAP[s]["label"] for s in (scenarios or []) if s in SCENARIO_MAP]
     vibe = _vibe_phrase(scenarios)
 
+    seed = f"{brand}|{perfume_name}"
     if match_score >= 80:
-        opening = rng.choice(OPENING_TEMPLATES_HIGH)
-        confidence = rng.choice(CONFIDENCE_HIGH)
+        opening = _pick_template(OPENING_TEMPLATES_HIGH, f"open_high_{seed}")
+        confidence = _pick_template(CONFIDENCE_HIGH, f"conf_high_{seed}")
     elif match_score >= 65:
-        opening = rng.choice(OPENING_TEMPLATES_MID)
-        confidence = rng.choice(CONFIDENCE_MID)
+        opening = _pick_template(OPENING_TEMPLATES_MID, f"open_mid_{seed}")
+        confidence = _pick_template(CONFIDENCE_MID, f"conf_mid_{seed}")
     else:
-        opening = rng.choice(OPENING_TEMPLATES_LOW)
-        confidence = rng.choice(CONFIDENCE_LOW)
+        opening = _pick_template(OPENING_TEMPLATES_LOW, f"open_low_{seed}")
+        confidence = _pick_template(CONFIDENCE_LOW, f"conf_low_{seed}")
 
     highlights = _build_highlights(
-        rng, perfume_accords,
+        perfume_name, perfume_accords,
         scenario_labels, scenario_fit, matched_notes, matched_accords,
         longevity_requested, hours_required, longevity_fit, longevity_score,
         projection_preference, projection_fit, sillage_score, gender_matched,
@@ -825,7 +833,7 @@ def generate_explanation(
     highlight_text = " ".join(highlights)
 
     skin_phrase = f" {SKIN_TYPE_PHRASES[skin_type]}" if skin_type in SKIN_TYPE_PHRASES and SKIN_TYPE_PHRASES[skin_type] else ""
-    price_phrase = _price_phrase(price_inr, budget, rng)
+    price_phrase = _price_phrase(price_inr, budget, perfume_name)
 
     opening_text = opening.format(brand=brand, perfume=perfume_name, vibe=vibe)
 

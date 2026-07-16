@@ -541,6 +541,7 @@ SCENARIO_KEYWORDS = {
 LONGEVITY_PHRASES = [
     "long lasting", "long-lasting", "lasts long", "lasts all day", "all day",
     "all-day", "stays long", "longevity", "full day", "long wear", "long lasting scent",
+    "sweat", "sweating", "perspire",
 ]
 
 MALE_HINTS = [r"\bmale\b", r"\bman\b", r"\bmen\b", r"\bboy\b", r"\bguy\b", r"\bhim\b", r"\bhis\b", r"\bhusband\b", r"\bboyfriend\b", r"\bmasculine\b", r"\bgentleman\b", r"\bgentlemen\b"]
@@ -662,6 +663,8 @@ BUDGET_TEXT_PATTERNS = [
     # the unrelated small numbers "under/less than" modifies elsewhere in this
     # domain - hour counts ("under 8 hours") and ages are always 1-2 digits.
     r"(?:under|below|less than)\s+([1-9]\d{2,4})\b",
+    # "{number} or less" phrasing ("2000 or less", "in almost 2000 or less")
+    r"([1-9]\d{2,4})\s+or\s+less\b",
 ]
 
 # Age -> accord-tier affinity, sourced from industry/consumer research (fragrance retailer

@@ -1,6 +1,7 @@
 import re
 
 from app.services.decision_engine import MATCH_STOP_WORDS, rank_and_explain
+from app.services.hnsw_tuner import dynamic_ef_search
 from app.services.ml_engine import generate_embedding_async
 from app.services.scenario_map import classify_accord_tiers, classify_note_tiers
 
@@ -144,8 +145,15 @@ def _clean_notes_and_pyramid(r) -> tuple[list[str], list[str], list[str], list[s
     return notes, top_notes, heart_notes, base_notes, not notes
 
 
+DENSE_WEIGHT = 0.7
+SPARSE_WEIGHT = 0.3
+
+
 def _format_perfume_row(r) -> dict:
     notes, top_notes, heart_notes, base_notes, has_limited_data = _clean_notes_and_pyramid(r)
+    dense_sim = float(r["similarity"]) if r.get("similarity") is not None else 0.0
+    sparse_sim = float(r["sparse_similarity"]) if r.get("sparse_similarity") is not None else 0.0
+    hybrid_sim = DENSE_WEIGHT * dense_sim + SPARSE_WEIGHT * min(sparse_sim, 1.0)
     return {
         "id": r["id"],
         "brand": r["brand"],
@@ -160,8 +168,8 @@ def _format_perfume_row(r) -> dict:
         "gender": r["gender"],
         "longevity_score": float(r["longevity_score"]) if r["longevity_score"] is not None else None,
         "sillage_score": float(r["sillage_score"]) if r["sillage_score"] is not None else None,
-        "similarity": float(r["similarity"]) if r.get("similarity") is not None else 0,
-        "match_score": round(float(r["similarity"]) * 100, 1) if r.get("similarity") is not None else 0,
+        "similarity": hybrid_sim,
+        "match_score": round(hybrid_sim * 100, 1),
         "savings": None,
         "url": r.get("url"),
         "country": r.get("country"),
@@ -242,14 +250,15 @@ async def _fetch_candidates(
     exact case most likely to filter hard) rather than a single fixed
     constant, capped at 1000 to keep the exhaustiveness/latency tradeoff
     reasonable."""
-    ef_search = min(1000, max(pool_size * 2, 200))
+    ef_search = dynamic_ef_search(pool_size, budget=budget, has_exclusions=bool(exclude_family_brand or excluded_note_patterns))
     if reference_id is not None:
         sql = """
             SELECT id, brand, perfume, price_inr, notes, main_accords, type,
                    gender, longevity_score, sillage_score,
                    top_notes, heart_notes, base_notes,
                    url, country, perfumer,
-                   1 - (embedding <=> (SELECT embedding FROM perfumes WHERE id = $1)) AS similarity
+                   1 - (embedding <=> (SELECT embedding FROM perfumes WHERE id = $1)) AS similarity,
+                   COALESCE(ts_rank(search_vector, plainto_tsquery('english', $8::text)), 0) AS sparse_similarity
             FROM perfumes
             WHERE ($2::float IS NULL OR price_inr <= $2) AND ($4::int IS NULL OR id != $4)
               AND ($5::text IS NULL OR NOT (brand ILIKE '%' || $5 || '%' OR $5 ILIKE '%' || brand || '%'))
@@ -264,15 +273,20 @@ async def _fetch_candidates(
         async with db.transaction():
             await db.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
             return await db.fetch(sql, reference_id, budget, pool_size, exclude_id, exclude_family_brand,
-                                   excluded_note_patterns, gender)
+                                   excluded_note_patterns, gender, query)
 
-    embedding = await generate_embedding_async(query)
+    embedding = await generate_embedding_async(query, is_query=True)
+    # Plain query for FTS — strip BGE prefixes if present
+    fts_query = query
+    if fts_query.startswith("Represent this sentence for searching relevant passages: "):
+        fts_query = fts_query[len("Represent this sentence for searching relevant passages: "):]
     sql = """
         SELECT id, brand, perfume, price_inr, notes, main_accords, type,
                gender, longevity_score, sillage_score,
                top_notes, heart_notes, base_notes,
                url, country, perfumer,
-               1 - (embedding <=> $1::vector) AS similarity
+               1 - (embedding <=> $1::vector) AS similarity,
+               COALESCE(ts_rank(search_vector, plainto_tsquery('english', $8::text)), 0) AS sparse_similarity
         FROM perfumes
         WHERE ($2::float IS NULL OR price_inr <= $2) AND ($4::int IS NULL OR id != $4)
           AND ($5::text IS NULL OR NOT (brand ILIKE '%' || $5 || '%' OR $5 ILIKE '%' || brand || '%'))
@@ -287,7 +301,7 @@ async def _fetch_candidates(
     async with db.transaction():
         await db.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
         return await db.fetch(sql, _to_pgvector_literal(embedding), budget, pool_size, exclude_id,
-                               exclude_family_brand, excluded_note_patterns, gender)
+                               exclude_family_brand, excluded_note_patterns, gender, fts_query)
 
 
 async def search_by_context(

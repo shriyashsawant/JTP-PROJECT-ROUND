@@ -30,10 +30,10 @@ async def _init_scenario_embeddings():
     if SCENARIO_EMBEDDINGS:
         return
     try:
-        from app.services.ml_engine import generate_embedding_async
+        from app.services.ml_engine import generate_document_embedding_async
         for key, s in SCENARIO_MAP.items():
             text = f"{s['label']}. {s['vibe']}. {s['description']}"
-            SCENARIO_EMBEDDINGS[key] = await generate_embedding_async(text)
+            SCENARIO_EMBEDDINGS[key] = await generate_document_embedding_async(text)
     except Exception:
         logger.warning("Failed to lazily compute scenario embeddings", exc_info=True)
 
@@ -52,7 +52,7 @@ async def detect_scenarios_semantic(raw_query: str, absolute_threshold: float = 
         return []
     try:
         from app.services.ml_engine import generate_embedding_async
-        q_emb = np.array(await generate_embedding_async(raw_query))
+        q_emb = np.array(await generate_embedding_async(raw_query, is_query=True))
         scores = []
         for key, s_emb in SCENARIO_EMBEDDINGS.items():
             s_emb_arr = np.array(s_emb)
@@ -234,3 +234,118 @@ def detect_negated_terms(raw_query: str) -> list[str]:
         if phrase_words:
             negated.append(" ".join(phrase_words))
     return list(dict.fromkeys(negated))
+
+
+# Helper regex/mappings for age, skin type and note families
+AGE_RE = re.compile(
+    r"\b(\d{1,2})\s*(?:years?(?:\s*old)?|yo\b|y/o)\b"
+    r"|(?:\b|^)(\d{1,2})\b(?=[\s,])"
+    r"|(?:\bi'?m|\bi\s+am)\s+(\d{1,2})\b",
+    re.IGNORECASE
+)
+
+NUMBER_WORDS = {
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+ONES_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+}
+
+WORD_AGE_RE = re.compile(
+    r"\b(?:i'?m|i\s+am)\s+((?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[\s-](?:one|two|three|four|five|six|seven|eight|nine))?)\b"
+    r"|\b((?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[\s-](?:one|two|three|four|five|six|seven|eight|nine))?)\s+years?\s*old\b",
+    re.IGNORECASE
+)
+
+def words_to_age(phrase: str) -> int | None:
+    parts = re.split(r"[\s-]+", phrase.lower().strip())
+    if not parts:
+        return None
+    tens = NUMBER_WORDS.get(parts[0])
+    if tens is None:
+        return None
+    if len(parts) == 1:
+        return tens
+    if tens >= 20 and len(parts) == 2 and parts[1] in ONES_WORDS:
+        return tens + ONES_WORDS[parts[1]]
+    return None
+
+def detect_age(raw_query: str) -> int | None:
+    if not raw_query:
+        return None
+    trimmed = raw_query.strip()
+    match = AGE_RE.search(trimmed)
+    if match:
+        val = match.group(1) or match.group(2) or match.group(3)
+        if val:
+            try:
+                age = int(val)
+                if 13 <= age <= 100:
+                    return age
+            except ValueError:
+                pass
+
+    word_match = WORD_AGE_RE.search(trimmed)
+    if word_match:
+        phrase = word_match.group(1) or word_match.group(2)
+        if phrase:
+            age = words_to_age(phrase)
+            if age is not None and 13 <= age <= 100:
+                return age
+    return None
+
+
+SKIN_TYPE_RE = re.compile(
+    r"\b(dry|oily|normal)\b\s*skin|\bskin\b\s*(?:type\s*)?(?:is\s*)?(dry|oily|normal)\b",
+    re.IGNORECASE
+)
+
+def detect_skin_type(raw_query: str) -> str | None:
+    if not raw_query:
+        return None
+    match = SKIN_TYPE_RE.search(raw_query)
+    if match:
+        return (match.group(1) or match.group(2)).lower()
+    return None
+
+
+SCENT_WORDS = [
+    "woody", "woodsy", "floral", "florals", "white floral", "citrus", "citrusy",
+    "fresh", "sweet", "spicy", "oud", "musk", "musky", "vanilla", "aquatic",
+    "marine", "ozonic", "green", "tropical", "fruity", "gourmand", "aromatic",
+    "earthy", "smoky", "leather", "leathery", "powdery", "amber", "balsamic",
+    "animalic", "patchouli", "incense", "tobacco", "rose", "herbal", "aldehydic"
+]
+SCENT_TO_NOTE_FAMILIES = {
+    "woody": ["woody"], "woodsy": ["woody"],
+    "floral": ["floral"], "florals": ["floral"], "white floral": ["floral"], "rose": ["floral"], "aldehydic": ["floral"],
+    "citrus": ["citrus"], "citrusy": ["citrus"],
+    "fresh": ["fresh_aquatic"], "aquatic": ["fresh_aquatic"], "marine": ["fresh_aquatic"], "ozonic": ["fresh_aquatic"],
+    "green": ["green"], "herbal": ["green"],
+    "spicy": ["spicy"],
+    "oud": ["earthy"], "earthy": ["earthy"], "patchouli": ["earthy"],
+    "musk": ["animalic"], "musky": ["animalic"], "animalic": ["animalic"], "leather": ["animalic"], "leathery": ["animalic"],
+    "vanilla": ["oriental", "gourmand"],
+    "gourmand": ["gourmand"], "sweet": ["gourmand"],
+    "fruity": ["fruity"], "tropical": ["fruity"],
+    "amber": ["oriental"], "incense": ["oriental"],
+    "tobacco": ["woody", "oriental"],
+    "aromatic": ["aromatic"],
+    "smoky": ["smoky"],
+    "powdery": ["powdery"],
+    "balsamic": ["balsamic"],
+}
+SCENT_RE = re.compile(r"\b(" + "|".join(SCENT_WORDS) + r")\b", re.IGNORECASE)
+
+def detect_note_families(raw_query: str) -> list[str]:
+    if not raw_query:
+        return []
+    families = set()
+    for match in SCENT_RE.finditer(raw_query):
+        key = match.group(1).lower()
+        if key in SCENT_TO_NOTE_FAMILIES:
+            for family in SCENT_TO_NOTE_FAMILIES[key]:
+                families.add(family)
+    return sorted(list(families))

@@ -616,3 +616,209 @@ class TestCapByScentCharacter:
         capped = cap_by_scent_character(results, limit=5, max_per_accord=2)
         assert len(capped) == 5  # backfill still reaches the limit
         assert [r["id"] for r in capped] == [0, 1, 2, 3, 4]  # rank order preserved throughout
+
+
+# ---------------------------------------------------------------------------
+# Full-pipeline integration tests
+# ---------------------------------------------------------------------------
+
+class TestFullPipeline:
+    """Exercises the complete rank_and_explain pipeline end-to-end: intent
+    signals → ten-dimension scoring → diversity capping → explanation
+    generation. These tests verify that every component integrates correctly
+    and produces consistent, deterministic output."""
+
+    def _perfume(self, **overrides):
+        base = {
+            "id": 1, "brand": "TestBrand", "perfume": "Vanilla Dream",
+            "price_inr": 1000, "notes": ["vanilla", "tonka bean"],
+            "main_accords": ["vanilla", "sweet"], "gender": "unisex",
+            "longevity_score": 60, "sillage_score": 50, "similarity": 0.8,
+            "top_notes": [], "heart_notes": [], "base_notes": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_bare_query_runs_full_pipeline_no_crash(self):
+        """Minimal query with no explicit signals — only always-active
+        dimensions (SIM_WEIGHT + NOTE_MATCH_WEIGHT) contribute to the score.
+        Must not crash and must return all required response fields."""
+        results = [self._perfume(id=1)]
+        ranked = rank_and_explain(results, query="vanilla scent")
+        assert len(ranked) == 1
+        r = ranked[0]
+        assert "match_score" in r
+        assert "explanation" in r
+        assert "match_breakdown" in r
+        assert isinstance(r["match_score"], float)
+        assert isinstance(r["explanation"], str)
+        assert isinstance(r["match_breakdown"], list)
+
+    def test_all_ten_dimensions_active_scores_appropriately(self):
+        """When every signal dimension is activated, the normalized
+        denominator grows to include all weights. A perfect match on every
+        dimension should still score 100.0 regardless of how many dimensions
+        are active."""
+        results = [self._perfume(id=1, similarity=1.0)]
+        ranked = rank_and_explain(
+            results, query="vanilla", budget=2000, scenarios=["gym"],
+            gender="male", age=25, longevity_requested=True, hours_required=8,
+            projection_preference="strong",
+            note_families=["gourmand"],
+            negated_terms=["oud"],
+        )
+        r = ranked[0]
+        assert 0 <= r["match_score"] <= 100
+        assert len(r["match_breakdown"]) >= 2  # at least the always-active ones
+        assert isinstance(r["explanation"], str)
+        assert len(r["explanation"]) > 10
+
+    def test_match_breakdown_only_lists_signalled_criteria(self):
+        """A query with only budget and gender should show exactly those
+        criteria in the breakdown (plus the always-active scent profile
+        match), not every possible dimension."""
+        results = [self._perfume(id=1, price_inr=500)]
+        ranked = rank_and_explain(
+            results, query="vanilla scent", budget=1000, gender="female",
+        )
+        breakdown = ranked[0]["match_breakdown"]
+        labels = [item["label"] for item in breakdown]
+        # Should include budget and gender
+        assert any("budget" in label.lower() for label in labels)
+        assert any("Gender" in label for label in labels)
+        # Should NOT include dimensions that weren't signalled
+        assert not any("Occasion" in label for label in labels)
+        assert not any("longevity" in label.lower() for label in labels)
+        assert not any("projection" in label.lower() for label in labels)
+
+    def test_explanation_is_deterministic_across_calls(self):
+        """Same inputs must always produce the identical explanation text.
+        This is the key determinism guarantee — no random.choice anywhere
+        in the pipeline."""
+        results = [self._perfume(id=1, perfume="Vanilla Dream", brand="TestBrand")]
+        ranked_1 = rank_and_explain(results, query="vanilla", budget=2000, gender="female")
+        ranked_2 = rank_and_explain(results, query="vanilla", budget=2000, gender="female")
+        assert ranked_1[0]["explanation"] == ranked_2[0]["explanation"]
+        assert ranked_1[0]["match_score"] == ranked_2[0]["match_score"]
+        assert ranked_1[0]["match_breakdown"] == ranked_2[0]["match_breakdown"]
+
+    def test_different_perfumes_get_different_explanations(self):
+        """Two distinct perfumes with the same query should get different
+        explanation text (because _pick_template uses the perfume's own
+        identity as part of the seed)."""
+        vanilla = self._perfume(id=1, perfume="Vanilla Dream", brand="TestBrand", notes=["vanilla"], main_accords=["sweet"])
+        citrus = self._perfume(id=2, perfume="Citrus Blast", brand="OtherBrand", notes=["lemon", "bergamot"], main_accords=["citrus", "fresh"])
+        ranked = rank_and_explain([vanilla, citrus], query="fresh summer")
+        assert ranked[0]["explanation"] != ranked[1]["explanation"]
+
+    def test_pipeline_handles_missing_notes_gracefully(self):
+        """Rows with empty notes arrays must not crash the pipeline — 21% of
+        the real catalog has no notes data."""
+        results = [self._perfume(id=1, notes=[], main_accords=["woody"])]
+        ranked = rank_and_explain(results, query="woody")
+        assert len(ranked) == 1
+        assert ranked[0]["match_score"] >= 0
+
+    def test_pipeline_handles_none_longevity_and_sillage(self):
+        """Perfumes with NULL longevity/sillage scores must not crash during
+        _adjust_performance_by_type or _longevity_fit."""
+        results = [self._perfume(id=1, longevity_score=None, sillage_score=None)]
+        ranked = rank_and_explain(results, query="vanilla", longevity_requested=True, hours_required=8)
+        assert len(ranked) == 1
+        assert ranked[0]["match_score"] >= 0
+
+    def test_pipeline_sorts_results_by_score_descending(self):
+        """rank_and_explain sorts results by match_score descending when no
+        budget is given — the best match is always first."""
+        results = [
+            self._perfume(id=1, perfume="Good Match", similarity=1.0, notes=["vanilla"]),
+            self._perfume(id=2, perfume="OK Match", similarity=0.5, notes=["vanilla"]),
+        ]
+        ranked = rank_and_explain(results, query="vanilla")
+        assert ranked[0]["match_score"] >= ranked[1]["match_score"]
+
+    def test_negation_penalty_appears_in_match_breakdown(self):
+        """Negated terms found on a candidate should surface as an 'unmet'
+        criterion in its match_breakdown."""
+        results = [self._perfume(id=1, notes=["vanilla", "sandalwood"])]
+        ranked = rank_and_explain(results, query="vanilla not sandalwood", negated_terms=["sandalwood"])
+        breakdown = ranked[0]["match_breakdown"]
+        assert any("excluded note" in item["label"].lower() for item in breakdown)
+        assert any(item["status"] == "unmet" for item in breakdown)
+
+    def test_full_pipeline_with_dupe_like_reference(self):
+        """Simulates a dupe search with reference accords/notes — the
+        composition overlap dimension must produce a meaningful score and
+        explanation."""
+        results = [
+            self._perfume(
+                id=1, perfume="Dupe Candidate", notes=["bergamot", "musk", "amber"],
+                main_accords=["citrus", "musky", "amber"],
+            ),
+            self._perfume(
+                id=2, perfume="Wrong Scent", notes=["lavender", "rose"],
+                main_accords=["floral", "powdery"],
+            ),
+        ]
+        ranked = rank_and_explain(
+            results, query="cheaper alternative to Sauvage",
+            reference_accords=["citrus", "musky"], reference_notes=["bergamot", "amber"],
+        )
+        assert ranked[0]["perfume"] == "Dupe Candidate"
+        assert ranked[1]["perfume"] == "Wrong Scent"
+        # The reference composition overlap should appear in the breakdown
+        assert any("overlap" in item["label"].lower() for item in ranked[0]["match_breakdown"])
+
+    def test_pipeline_respects_limit(self):
+        """rank_and_explain must return at most `limit` results."""
+        results = [self._perfume(id=i) for i in range(10)]
+        ranked = rank_and_explain(results, query="test", limit=3)
+        assert len(ranked) == 3
+
+    def test_identity_boost_shown_in_explanation(self):
+        """When a user names a specific perfume, the identity boost should
+        be reflected in the explanation text."""
+        results = [self._perfume(id=1, brand="Dior", perfume="Sauvage Elixir")]
+        ranked = rank_and_explain(results, query="Dior Sauvage Elixir")
+        explanation = ranked[0]["explanation"]
+        assert "exact match" in explanation.lower() or "Dior" in explanation
+
+    def test_chemical_bridge_appears_in_breakdown(self):
+        """When the query signals both fresh AND long-lasting, the bridge
+        dimension must be active and shown in the breakdown."""
+        results = [self._perfume(id=1, top_notes=["bergamot"], base_notes=["musk", "cedar"],
+                                 notes=["bergamot", "cedar"], main_accords=["citrus", "musky"])]
+        ranked = rank_and_explain(
+            results, query="fresh gym scent that lasts 12 hours",
+            scenarios=["gym"], hours_required=12,
+        )
+        breakdown = ranked[0]["match_breakdown"]
+        assert any("long-lasting base" in item["label"] for item in breakdown)
+
+    def test_age_appears_in_breakdown_when_not_provided_as_explicit_field(self):
+        """The backend only reads age from an explicit `age` field — when
+        absent, it must not appear in the breakdown."""
+        results = [self._perfume(id=1)]
+        ranked = rank_and_explain(results, query="vanilla dream")
+        breakdown = ranked[0]["match_breakdown"]
+        assert not any("Age-appropriate" in item["label"] for item in breakdown)
+
+    def test_pipeline_handles_case_insensitive_brand_capping(self):
+        """cap_per_brand is case-insensitive — different casing of the same
+        brand must still be capped together. With backfill=True and only 1
+        other brand available, the cap relaxes to 3 CREED to fill the limit."""
+        results = [
+            self._perfume(id=1, brand="CREED", perfume="Aventus", similarity=0.9),
+            self._perfume(id=2, brand="Creed", perfume="Irish Tweed", similarity=0.85),
+            self._perfume(id=3, brand="creed", perfume="Original Santal", similarity=0.8),
+            self._perfume(id=4, brand="OtherHouse", perfume="Unique", similarity=0.7),
+        ]
+        capped = cap_per_brand(results, limit=4, max_per_brand=2)
+        brands = [r["brand"].lower() for r in capped]
+        # Strict pass: 2 CREED + 1 OtherHouse = 3; backfill allows 1 more = 4 total max
+        assert 1 <= brands.count("creed") <= 3
+        assert "otherhouse" in brands
+
+        # With backfill=False, strict cap holds even if short of limit
+        capped_strict = cap_per_brand(results, limit=4, max_per_brand=2, backfill=False)
+        assert sum(1 for r in capped_strict if r["brand"].lower() == "creed") == 2

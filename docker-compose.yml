@@ -35,7 +35,6 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://auramatch:auramatch_secret@db:5432/auramatch
-      MODEL_NAME: all-MiniLM-L6-v2
       DEBUG: "false"
       CORS_ORIGINS: http://localhost:3000
       # Optional - LLM re-ranking/explanation layer is skipped entirely if this

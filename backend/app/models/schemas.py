@@ -19,6 +19,7 @@ class ContextSearchRequest(BaseModel):
     hours_required: int | None = Field(None, ge=1, le=24, description="Minimum longevity in hours (20% of the score) - same signal as typing '8+ hours' in the query, but explicit")
     projection_preference: Literal["light", "moderate", "strong"] | None = Field(None, description="Preferred sillage/projection strength (10% of the score)")
     deal_breaker: bool = Field(False, description="If true and a budget is set, results are sorted cheapest-first instead of nearest-to-budget-first")
+    session_id: str | None = Field(None, max_length=128, description="Session identifier for personalization - enables preference-aware LLM ranking based on past click history")
 
 class BudgetSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500, description="Perfume name or description")
@@ -32,6 +33,7 @@ class BudgetSearchRequest(BaseModel):
     hours_required: int | None = Field(None, ge=1, le=24, description="Minimum longevity in hours (20% of the score) - same signal as typing '8+ hours' in the query, but explicit")
     projection_preference: Literal["light", "moderate", "strong"] | None = Field(None, description="Preferred sillage/projection strength (10% of the score)")
     deal_breaker: bool = Field(False, description="If true and a budget is set, results are sorted cheapest-first instead of nearest-to-budget-first")
+    session_id: str | None = Field(None, max_length=128, description="Session identifier for personalization - enables preference-aware LLM ranking based on past click history")
 
 class PerfumeResponse(BaseModel):
     id: int
@@ -88,9 +90,38 @@ class PerfumeDetailResponse(BaseModel):
         "is inferred from main_accords (see classify_accord_tiers), not real Fragrantica note tags."
     )
 
+class FeedbackEventRequest(BaseModel):
+    event_type: Literal["click", "purchase", "dismiss"]
+    perfume_id: int = Field(..., ge=1)
+    query_id: str = Field(..., min_length=1, max_length=64)
+    query_text: str = Field("", max_length=500)
+    session_id: str | None = Field(None, max_length=128)
+    variant: str | None = Field(None, max_length=64)
+    match_score: float | None = Field(None, ge=0, le=100)
+    position: int | None = Field(None, ge=0, le=100)
+    dwell_ms: int | None = Field(None, ge=0)
+
 class ClassifyIntentRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500, description="User query to classify")
 
 class HealthResponse(BaseModel):
     status: str
     db_connected: bool
+
+class PreferenceExtractionRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500, description="User query text to extract preferences from")
+    session_id: str | None = Field(None, max_length=128, description="Optional session ID")
+
+class PreferenceExtractionResponse(BaseModel):
+    gender: Literal["male", "female", "unisex"] | None = None
+    scenarios: list[str] = []
+    note_families: list[str] = []
+    avoid_notes: list[str] = []
+    hours_required: int | None = None
+    longevity_requested: bool = False
+    projection_preference: Literal["light", "moderate", "strong"] | None = None
+    budget: float | None = None
+    age: int | None = None
+    skin_type: Literal["dry", "oily", "normal"] | None = None
+    is_dupe_intent: bool = False
+    is_off_topic: bool = False
