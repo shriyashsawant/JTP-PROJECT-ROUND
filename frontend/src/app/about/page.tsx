@@ -25,7 +25,7 @@ export default function AboutPage() {
         <h2 className="text-base font-semibold text-foreground">Tech Stack</h2>
         <ul className="list-disc space-y-1 pl-5">
           <li><strong>Frontend:</strong> Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui, Framer Motion</li>
-          <li><strong>Backend:</strong> FastAPI, asyncpg, SentenceTransformers (all-MiniLM-L6-v2)</li>
+          <li><strong>Backend:</strong> FastAPI, asyncpg, SentenceTransformers (BAAI/bge-small-en-v1.5)</li>
           <li><strong>Database:</strong> PostgreSQL + pgvector (384-d embeddings, GIN-indexed accord/note arrays)</li>
           <li><strong>Infrastructure:</strong> Docker Compose, 3 containers on a custom bridge network - no external cloud services required</li>
         </ul>

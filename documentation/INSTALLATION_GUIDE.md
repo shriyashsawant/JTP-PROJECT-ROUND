@@ -71,7 +71,7 @@ Once the containers are up and healthy, the system is available at:
 
 ## 4. Configuring Environment Variables (Optional)
 
-AuraMatch AI runs fully offline by default, generating vector embeddings locally with `all-MiniLM-L6-v2`. You can optionally enable **Groq LLM re-ranking** to get natural-language explanations alongside matches:
+AuraMatch AI runs fully offline by default, generating vector embeddings locally with `BAAI/bge-small-en-v1.5`. You can optionally enable **Groq LLM re-ranking** to get natural-language explanations alongside matches:
 
 1. Create a `.env` file at the project root:
    ```bash
@@ -186,7 +186,7 @@ npm run dev
 | :--- | :--- |
 | **Port 3000 or 8000 already in use** | Another local process is bound to that port. Remap the host port in `docker-compose.yml` (e.g. `"3001:80"` for the frontend). |
 | **Database connection fails** | The database container may still be initializing or seeding. Tail its logs: `docker compose logs db` |
-| **Vector embeddings feel slow on the first query** | The `all-MiniLM-L6-v2` transformer model is loading into memory (a one-time ~2–3 second delay). Every query after that is fast. |
+| **Vector embeddings feel slow on the first query** | The `BAAI/bge-small-en-v1.5` transformer model is loading into memory (a one-time ~2–3 second delay). Every query after that is fast. |
 | **Need to reset the database from scratch** | Run `docker compose down -v` then `docker compose up --build -d` — this drops the volume and re-seeds from a clean state. |
 
 > **Caution:** `docker compose down -v` permanently deletes the seeded database volume. Only use it when you actually intend to start over.

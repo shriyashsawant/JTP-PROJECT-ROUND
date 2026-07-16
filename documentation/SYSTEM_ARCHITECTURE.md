@@ -9,7 +9,7 @@ This document provides a detailed description of the system architecture, compon
 AuraMatch AI is designed as a decoupled, multi-tier web application built to serve semantic search, duplicate scent analysis, and olfactory classification tasks. The system is split into three distinct layers:
 *   **Presentation Layer (Next.js)**: A React-based web client running on Next.js 16 (App Router), employing TypeScript and dynamic styling to handle user queries, result visualization, and scent profile analysis. See [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md) for the page-by-page breakdown.
 *   **Application Services Layer (FastAPI)**: A high-performance Python backend serving REST APIs, managing database access pools, executing vector searches, running deterministic scoring routines, and orchestrating external LLM calls.
-*   **Persistence and Machine Learning Tier**: A PostgreSQL database containerized with the `pgvector` and `pg_trgm` extensions, operating alongside an in-memory vector embedding model (`all-MiniLM-L6-v2`) and an external re-ranking processor (Groq API).
+*   **Persistence and Machine Learning Tier**: A PostgreSQL database containerized with the `pgvector` and `pg_trgm` extensions, operating alongside an in-memory vector embedding model (`BAAI/bge-small-en-v1.5`) and an external re-ranking processor (Groq API).
 
 ---
 
@@ -30,7 +30,7 @@ graph TD
     CircuitBreaker[Circuit Breaker - app/services/circuit_breaker.py]
     LLMEnrichment[Groq Rerank Service - app/services/llm_enrichment.py]
     PostgresDB[(PostgreSQL Database + pgvector)]
-    LocalModel[SentenceTransformer Model - all-MiniLM-L6-v2]
+    LocalModel[SentenceTransformer Model - BAAI/bge-small-en-v1.5]
     GroqAPI[Groq Cloud API]
 
     ClientSPA -->|HTTP REST + X-API-Key| LoggingMW

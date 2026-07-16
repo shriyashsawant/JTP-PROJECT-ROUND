@@ -44,7 +44,7 @@ AuraMatch AI combines semantic search with deterministic olfactory rules and dat
 
 *   **Frontend**: Next.js 16 (App Router), TypeScript, Tailwind CSS 4, shadcn/ui, Framer Motion.
 *   **Backend**: FastAPI (Python 3.11), PostgreSQL with `pgvector` extension for ANN (Approximate Nearest Neighbor) cosine distance searches.
-*   **Vector Models**: `all-MiniLM-L6-v2` locally hosted SentenceTransformer generating 384-dimensional dense vectors.
+*   **Vector Models**: `BAAI/bge-small-en-v1.5` locally hosted SentenceTransformer generating 384-dimensional dense vectors.
 *   **LLM Layer**: Groq Cloud SDK (Llama 3) for explanation enrichment, wrapped inside a custom circuit breaker to ensure 100% service uptime even if external APIs experience downtime.
 *   **Database Migrations**: Alembic tracking schema changes dynamically.
 
