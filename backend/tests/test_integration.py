@@ -3,12 +3,27 @@ Integration tests for the FastAPI application — API endpoints end-to-end.
 
 Tests the app through httpx's ASGI transport, exercising real route handling,
 middleware, dependency injection, schema validation, CORS headers, and error
-responses. These tests need a live database — the whole module is skipped when
-DB_HOST and DATABASE_URL are both absent.
+responses. These tests need a live database — auto-detects the Docker-exposed
+Postgres on localhost:5434 when DB_HOST/DATABASE_URL are not set (i.e. when
+running from a local terminal rather than inside the backend container).
 """
 import os
+import socket
 
 import pytest
+
+# Auto-detect Docker Postgres on the host-exposed port when running locally.
+# The Docker compose maps 5434:5432, so probing localhost:5434 catches the
+# common case without any env var configuration.
+if not os.environ.get("DB_HOST") and not os.environ.get("DATABASE_URL"):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        sock.connect(("127.0.0.1", 5434))
+        sock.close()
+        os.environ["DATABASE_URL"] = "postgresql://auramatch:auramatch_secret@127.0.0.1:5434/auramatch"
+    except (OSError, ConnectionRefusedError):
+        pass
 
 from app.main import app
 
@@ -16,7 +31,7 @@ pytestmark = pytest.mark.asyncio
 
 _HAS_DB = bool(os.environ.get("DB_HOST")) or bool(os.environ.get("DATABASE_URL"))
 if not _HAS_DB:
-    pytest.skip("Skipping integration tests — no DB_HOST/DATABASE_URL configured", allow_module_level=True)
+    pytest.skip("Skipping integration tests — no DB_HOST/DATABASE_URL configured and no Postgres reachable on localhost:5434", allow_module_level=True)
 
 
 try:
